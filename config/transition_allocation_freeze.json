@@ -1,0 +1,41 @@
+{
+  "status": "frozen",
+  "decision_date": "2026-09-02",
+  "reason": "schema-13 transition allocation synchronization verified at 9/9 operating points",
+  "telemetry_schema_version": 13,
+  "verification_summary": "data/evaluation/transition_allocation_sync_v1/transition_allocation_summary.json",
+  "transition_allocation": {
+    "lambda_semantics": "continuous_transition_allocation_factor",
+    "lift_collective_weight": "1-lambda_exec",
+    "lambda_attitude_blend_start": 0.1,
+    "lambda_attitude_blend_full": 0.9,
+    "fw_attitude_weight": "clip((lambda_exec-0.1)/(0.9-0.1),0,1)",
+    "mc_attitude_weight": "1-fw_attitude_weight",
+    "pusher_control": "independent_airspeed_controller",
+    "stale_external_command": "restore_lift_support_and_use_stock_px4_blending"
+  },
+  "formal_f1": {
+    "authorized": true,
+    "airspeed_mps": [6, 8, 10, 12, 14, 16, 18, 20],
+    "lambda": [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
+    "valid_repeats_per_cell": 5,
+    "power_reporting": "effort_proxy_only"
+  },
+  "critical_file_sha256": {
+    "PX4-Autopilot/src/modules/vtol_att_control/standard.cpp": "4252edabe3821a9d6bea1b73966183165c28941dedb2fdfb8340b53338a45e0f",
+    "PX4-Autopilot/src/modules/vtol_att_control/standard.h": "3e26929a0f80fc013a215a1ae2369db436dd0ed712566afdef02be674b508898",
+    "PX4-Autopilot/src/modules/vtol_att_control/standard_params.c": "6a1914c509934bfaa4d70bded084a99821067bba7971a987ca60b837236ecae6",
+    "PX4-Autopilot/src/modules/uxrce_dds_client/dds_topics.yaml": "a498c3c7b05af850d15e93afc0c30361152e6d274ebe97d3199e296208b50e17",
+    "PX4-Autopilot/msg/NormalizedUnsignedSetpoint.msg": "ff6495167e40d65dd7a3442abeafd3013ca5e2db133d7fd0427c87c82e7ce2ab",
+    "ros2_ws/src/px4_msgs/msg/NormalizedUnsignedSetpoint.msg": "6fece0bbc03a1d38aa0fcd5597b462d9477e0803c9dd518ad3f882a8c35ffc61",
+    "ros2_ws/src/vtol_px4_control/src/vtol_command_node.cpp": "5ec13a75982f0f5fbc1cc89b3cec2e49d637452c66907f6b6c5801717a590ab6",
+    "ros2_ws/src/ca_lsc_transition/ca_lsc_transition/schedule.py": "c3cf92338d95f148bc159615feff2c32cf127174c382e4b72f9c69935e0291c2",
+    "ros2_ws/src/ca_lsc_transition/ca_lsc_transition/experiment_node.py": "e44fa77670ea3c54b4878bc3004c30566a915b417c12949a275708971a86b3df",
+    "ros2_ws/src/ca_lsc_transition/ca_lsc_transition/evaluate_run.py": "c66c0ef093c1b9e8b70530b54714d3678eec82b5235383522a64f497c8674fc1",
+    "ros2_ws/src/ca_lsc_transition/launch/nominal_transition.launch.py": "07cd4b05fd175ff8aad112bb4763765d03ce030686c3ed7614d918176f45599e",
+    "config/nominal_low_level.env": "dc4172f39b1dda4df3dafd1b8c63493eef45634811a52a55aa92df9cc262c6e2",
+    "scripts/run_va_hold_characterization.sh": "af3bd4f7762ec4b269131b14e7ce3adae0f3ee12e9a396ce16cd8736f277439a",
+    "PX4-Autopilot/build_ca_make/bin/px4": "6d88348f405d040a5dbf2f57fde089977beeb2ff0b341a200ce53f77320a92e7",
+    "ros2_ws/install_ca/vtol_px4_control/lib/vtol_px4_control/vtol_command_node": "4463f87581ba1c0c6f1cde1aa2ef2bc96d2607f68cb30e405881c358c58e4f19"
+  }
+}

@@ -1,0 +1,66 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Environments and editors
+.venv/
+.idea/
+.vscode/
+.DS_Store
+*.swp
+*~
+
+# Experiment outputs
+data/calibration/*
+data/checkpoints/*
+data/evaluation/*
+data/training/*
+!data/calibration/.gitkeep
+!data/checkpoints/.gitkeep
+!data/evaluation/.gitkeep
+!data/training/.gitkeep
+runs/
+videos/
+wandb/
+*.pt
+*.pth
+*.zip
+*.ulg
+*.bag
+*.db3
+*.mcap
+
+# ROS/PX4 build products and external checkouts
+build/
+install/
+log/
+CMakeFiles/
+ros2_ws/build*/
+ros2_ws/install*/
+ros2_ws/log*/
+ros2_ws/data/
+PX4-Autopilot/
+Micro-XRCE-DDS-Agent/
+cleanrl/
+CfC/
+XTDrone2/
+third_party/XTDrone2/
+ros2_ws/src/px4_msgs/
+
+# Legacy navigation workspace packages retained only in the local migration tree
+ros2_ws/src/vtol_bringup/
+ros2_ws/src/vtol_perception/
+ros2_ws/src/vtol_rl/
+ros2_ws/src/vtol_simulation/
+ros2_ws/src/vtol_visualization/
+
+# Logs and crash dumps
+*.log
+core
+core.*

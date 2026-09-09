@@ -1,0 +1,8 @@
+name: vtol_nav
+channels:
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+      - -r requirements-vtol-nav.in

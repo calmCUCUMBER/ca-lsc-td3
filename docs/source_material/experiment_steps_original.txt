@@ -1,0 +1,1490 @@
+可以。按照我们刚刚定下来的 **CA-LSC-TD3：\(\eta_L+\eta_C\) + Physics Residual + CfC + Twin Safety Critics + Hard Shield**，实验不要一上来就训练 TD3。最合理的顺序是：
+
+\[
+\boxed{
+\text{模型验证}
+\rightarrow
+\text{基础扫描}
+\rightarrow
+\text{指标验证}
+\rightarrow
+\text{RL环境搭建}
+\rightarrow
+\text{分阶段训练}
+\rightarrow
+\text{基准实验}
+\rightarrow
+\text{鲁棒性}
+\rightarrow
+\text{Monte Carlo}
+\rightarrow
+\text{消融}
+}
+\]
+
+你可以直接按下面这个顺序实施。
+
+---
+
+# 1. 先把 VTOL 基础仿真模型跑通
+
+第一步先完全不要加 RL。
+
+对象固定为：
+
+\[
+\boxed{\text{Lift+Cruise VTOL}}
+\]
+
+即：
+
+- 垂直升力旋翼；
+- 固定机翼；
+- 前推螺旋桨；
+- elevator；
+- 如果做 6-DOF，再加入 aileron / rudder。
+
+先完成三种基本状态：
+
+\[
+\text{Hover}
+\]
+
+\[
+\text{Transition}
+\]
+
+\[
+\text{Fixed-wing Cruise}
+\]
+
+确认传统控制器本身能够完成：
+
+> 悬停 → 加速 → 建立机翼升力 → 减少 lift rotor thrust → 固定翼巡航。
+
+这一步只解决：
+
+\[
+\boxed{\text{飞机模型和低层飞控本身能不能正常工作}}
+\]
+
+不涉及强化学习。
+
+---
+
+# 2. 建立统一的标准转换工况
+
+先固定一个 nominal case，后面所有算法都从完全一样的初始状态出发。
+
+例如：
+
+\[
+h_0=50\,m
+\]
+
+\[
+V_{a,0}\approx0
+\]
+
+\[
+\theta_0\approx0
+\]
+
+\[
+\phi_0\approx0
+\]
+
+\[
+v_{z,0}\approx0
+\]
+
+目标：
+
+\[
+h_d=h_0
+\]
+
+\[
+V_{a,d}=V_{\rm cruise}
+\]
+
+也就是说：
+
+> 无人机在固定高度从 hover 加速到 fixed-wing cruise。
+
+建议整个论文都围绕这一标准任务展开，不要一会儿爬升、一会儿下降、一会儿转弯。
+
+否则变量太多。
+
+---
+
+# 3. 标定基础空气动力学参数
+
+这一步是为了后面的：
+
+\[
+\eta_L
+\]
+
+和：
+
+\[
+\eta_C
+\]
+
+能够计算。
+
+至少需要得到：
+
+\[
+C_L(\alpha)
+\]
+
+以及：
+
+\[
+C_{m_{\delta_e}}
+\]
+
+或者完整一些：
+
+\[
+C_m(\alpha,\delta_e)
+\]
+
+数据来源可以是：
+
+- 飞机模型自带气动参数；
+- CFD；
+- 风洞；
+- 仿真扫频/扫角；
+- 已知 aircraft aerodynamic database。
+
+最终得到：
+
+\[
+\hat L_w
+=
+\frac12\rho V_a^2S C_L(\alpha)
+\]
+
+和 elevator control effectiveness。
+
+你参考的 CEP 论文也是先通过 CFD 建立气动系数，再进入强化学习与控制设计，而不是直接让 RL 黑箱学习所有气动关系。
+
+---
+
+# 4. 第一组奠基实验 F1：做 \(V_a-\lambda\) 扫描
+
+这是正式论文实验里非常关键的一步。
+
+暂时关闭 RL。
+
+设定多个空速：
+
+\[
+V_a=
+6,8,10,12,14,16,18,20\;m/s
+\]
+
+每个空速下扫描：
+
+\[
+\lambda=
+0,0.1,0.2,\ldots,1
+\]
+
+每一个：
+
+\[
+(V_a,\lambda)
+\]
+
+组合跑一次短时间稳定仿真。
+
+记录：
+
+\[
+E
+\]
+
+\[
+\Delta h
+\]
+
+\[
+\alpha
+\]
+
+\[
+q
+\]
+
+\[
+P_{\rm lift}
+\]
+
+\[
+P_{\rm pusher}
+\]
+
+\[
+T_{\rm lift}
+\]
+
+最后做两张二维热图：
+
+### 图 A
+
+\[
+V_a-\lambda-E
+\]
+
+能耗 map。
+
+### 图 B
+
+\[
+V_a-\lambda-\Delta h_{\max}
+\]
+
+高度损失 map。
+
+你要证明：
+
+\[
+\boxed{
+\text{不同空速对应不同安全/高效的 }\lambda\text{ 区域}
+}
+\]
+
+而不是任何空速下都可以随便卸载 rotor。
+
+这一步正好对应你原方案里提出的 foundational \(V_a-\lambda\) scan。
+
+---
+
+# 5. 第二组 F2：证明固定空速 schedule 不够
+
+这一步加 payload 和风。
+
+例如：
+
+### 质量
+
+\[
+m=
+1.0m_0,\quad
+1.1m_0,\quad
+1.2m_0
+\]
+
+### 风
+
+\[
+V_w=
+0,\quad4,\quad8\,m/s
+\]
+
+然后重复一部分：
+
+\[
+V_a-\lambda
+\]
+
+扫描。
+
+重点观察：
+
+> 最佳或者安全的 \(\lambda\) 区域是不是发生移动。
+
+例如同样：
+
+\[
+V_a=14m/s
+\]
+
+可能 nominal：
+
+\[
+\lambda_{\rm feasible}=0.75
+\]
+
+重载：
+
+\[
+\lambda_{\rm feasible}=0.52
+\]
+
+突风：
+
+\[
+\lambda_{\rm feasible}=0.43
+\]
+
+这一步最终证明：
+
+\[
+\boxed{
+V_a
+\text{不能唯一决定转换状态}
+}
+\]
+
+以及：
+
+\[
+\boxed{
+\text{固定 airspeed schedule 不具有普适最优性}
+}
+\]
+
+你原来的实验逻辑也是用 payload 和 wind 证明最优转换区域发生移动。
+
+---
+
+# 6. 第三组 F3：正式验证 \(\eta_L\)
+
+现在开始计算：
+
+\[
+\boxed{
+\eta_L
+=
+\operatorname{sat}_{[0,1]}
+\left(
+\frac{
+\frac12\rho V_a^2SC_L(\alpha)
+\cos\gamma\cos\phi
+}{
+\hat m(g+a_{z,d})+\varepsilon
+}
+\right)
+}
+\]
+
+对于恒高转换：
+
+\[
+a_{z,d}=0
+\]
+
+所以近似：
+
+\[
+\eta_L
+\approx
+\frac{
+L_w\cos\gamma\cos\phi
+}{
+\hat mg
+}
+\]
+
+实验方法：
+
+在不同：
+
+\[
+V_a,m,\alpha,wind
+\]
+
+条件下计算：
+
+\[
+\eta_L
+\]
+
+然后观察：
+
+\[
+\eta_L
+\]
+
+与“能够安全减少 lift rotor thrust 的程度”之间是否存在明显关系。
+
+理想结果应该类似：
+
+\[
+\eta_L\uparrow
+\Rightarrow
+\lambda_{\rm feasible}\uparrow
+\]
+
+---
+
+# 7. 第四组 F4：验证 \(\eta_C\)
+
+启动我们设计的：
+
+\[
+\boxed{\text{Shadow FW Pitch Controller}}
+\]
+
+让它一直计算：
+
+\[
+M_{\rm req}^{FW}
+\]
+
+但是暂时不一定完全执行。
+
+根据：
+
+\[
+V_a,\delta_e,C_{m_{\delta_e}}
+\]
+
+计算：
+
+\[
+M_{e,\rm ava}
+\]
+
+然后计算：
+
+\[
+\eta_C
+\]
+
+重点做低速到高速扫描。
+
+你希望看到：
+
+\[
+V_a\approx0
+\Rightarrow
+\eta_C\approx0
+\]
+
+随着：
+
+\[
+V_a\uparrow
+\]
+
+动态压强：
+
+\[
+\bar q\uparrow
+\]
+
+最终：
+
+\[
+\eta_C\uparrow
+\]
+
+也就是说：
+
+> elevator 的控制能力是逐渐建立的，而不是某个空速突然从 0 变成 1。
+
+---
+
+# 8. 第五组 F5：证明 \(\eta_L+\eta_C\) 比单纯 \(V_a\) 更有效
+
+这一组我非常建议放进论文。
+
+构造大量随机转换状态。
+
+每个状态给一个 candidate：
+
+\[
+\lambda
+\]
+
+然后继续仿真：
+
+\[
+T_p=1\sim3s
+\]
+
+判断：
+
+\[
+y=
+\begin{cases}
+1,&安全\\
+0,&不安全
+\end{cases}
+\]
+
+安全可以定义为没有发生：
+
+\[
+|\alpha|>\alpha_{\max}
+\]
+
+\[
+|e_h|>h_{\max}
+\]
+
+\[
+|q|>q_{\max}
+\]
+
+或者明显失速/掉高。
+
+然后比较两组输入：
+
+### Model A
+
+\[
+V_a
+\]
+
+### Model B
+
+\[
+[V_a,\eta_L,\eta_C]
+\]
+
+对“candidate \(\lambda\) 是否安全”的解释能力。
+
+可以给：
+
+\[
+ROC-AUC
+\]
+
+或：
+
+\[
+F_1
+\]
+
+如果：
+
+\[
+AUC(V_a)
+<
+AUC(V_a,\eta_L,\eta_C)
+\]
+
+就形成非常强的证据：
+
+\[
+\boxed{
+\eta_L,\eta_C
+\text{确实提供了单一空速没有的信息}
+}
+\]
+
+这比单纯画两条曲线有说服力得多。
+
+---
+
+# 9. 到这里以后，再搭强化学习 Environment
+
+现在才开始 TD3。
+
+每一个 RL step 执行以下流程。
+
+首先读取：
+
+\[
+o_t=
+[
+V_a,\alpha,\gamma,
+\eta_L,\eta_C,
+e_h,v_z,\theta,q,
+\lambda_{\rm exec},
+P_L,P_P
+]
+\]
+
+然后：
+
+\[
+o_t
+\rightarrow
+CfC
+\rightarrow
+h_t
+\]
+
+---
+
+# 10. 计算 Physics Prior
+
+根据：
+
+\[
+\eta_L
+\]
+
+和：
+
+\[
+\eta_C
+\]
+
+得到：
+
+\[
+g_L
+\]
+
+\[
+g_C
+\]
+
+进一步：
+
+\[
+\boxed{
+\lambda_{\rm phy}
+=
+g_Lg_C
+}
+\]
+
+这只是物理先验。
+
+---
+
+# 11. Actor 只输出 residual
+
+CfC Actor 输出：
+
+\[
+a_t^{RL}\in[-1,1]
+\]
+
+转换为：
+
+\[
+\Delta\lambda_t^{RL}
+=
+\delta_\lambda a_t^{RL}
+\]
+
+然后：
+
+\[
+\boxed{
+\lambda_d
+=
+sat
+(
+\lambda_{\rm phy}
++
+\Delta\lambda_t^{RL}
+)
+}
+\]
+
+所以整个算法学的是：
+
+> 相对于物理先验，应该提前还是推迟卸载。
+
+---
+
+# 12. Safety Shield 处理候选动作
+
+根据：
+
+\[
+V_a,\alpha,\eta_L,\eta_C,e_h,v_z
+\]
+
+计算：
+
+\[
+\lambda_{\max}^{hard}
+\]
+
+然后：
+
+\[
+\lambda_{\rm proj}
+=
+\min
+(
+\lambda_d,
+\lambda_{\max}^{hard}
+)
+\]
+
+再经过非对称 rate limiter：
+
+\[
+\lambda_{\rm proj}
+\rightarrow
+\lambda_{\rm exec}
+\]
+
+满足：
+
+\[
+\dot\lambda_{\max}^{+}
+<
+\dot\lambda_{\max}^{-}
+\]
+
+也就是：
+
+> 卸载慢，恢复旋翼快。
+
+---
+
+# 13. 执行 VTOL 控制
+
+根据：
+
+\[
+\lambda_{\rm exec}
+\]
+
+计算 lift rotor feed-forward：
+
+\[
+T_{L,ff}
+\]
+
+再加高度反馈：
+
+\[
+T_{L,cmd}
+=
+T_{L,ff}
++
+T_{L,fb}
+\]
+
+前推电机仍然由：
+
+\[
+V_a\ controller
+\]
+
+控制。
+
+而 FW/MC 姿态控制融合由：
+
+\[
+\eta_C
+\]
+
+控制，而不是直接由：
+
+\[
+\lambda
+\]
+
+控制。
+
+这样每个模块职责非常清晰。
+
+---
+
+# 14. 每一步计算 Reward 和 Safety Cost
+
+Reward：
+
+\[
+P_{\rm total}
+=
+P_L+P_P
+\]
+
+主要包括：
+
+\[
+Energy
++
+Transition\ time
++
+Altitude
++
+Pitch
++
+Smoothness
+\]
+
+Safety cost 则单独计算：
+
+\[
+c_t
+\]
+
+包含：
+
+- AoA 接近失速；
+- 高度掉得过多；
+- 下降率过大；
+- Actor 超出 soft envelope；
+- Safety Shield intervention。
+
+特别记录：
+
+\[
+|\lambda_d-\lambda_{\rm exec}|
+\]
+
+---
+
+# 15. 数据存入 Sequence Replay Buffer
+
+因为用了 CfC，所以不是简单存：
+
+\[
+(s,a,r,s')
+\]
+
+而是存整段 sequence。
+
+例如 RL：
+
+\[
+10Hz
+\]
+
+取：
+
+\[
+L=20
+\]
+
+相当于：
+
+\[
+2s
+\]
+
+历史。
+
+训练时：
+
+\[
+5
+\]
+
+step burn-in，
+
+后：
+
+\[
+15
+\]
+
+step 参与网络更新。
+
+---
+
+# 16. 开始 Stage I 训练：Nominal
+
+第一阶段环境简单一点：
+
+- nominal mass；
+- nominal inertia；
+- 无风或弱风；
+- 无传感器噪声；
+- 气动模型准确；
+- 执行器正常。
+
+Actor 最后一层可以初始化为接近：
+
+\[
+a^{RL}=0
+\]
+
+因此初期：
+
+\[
+\lambda_d
+\approx
+\lambda_{\rm phy}
+\]
+
+减少随机探索导致的 crash。
+
+先确认：
+
+\[
+Reward
+\]
+
+能够收敛。
+
+---
+
+# 17. Stage II：Domain Randomization
+
+训练稳定之后逐渐加入：
+
+\[
+m
+\]
+
+\[
+J
+\]
+
+\[
+wind
+\]
+
+\[
+C_L
+\]
+
+\[
+C_{m_{\delta_e}}
+\]
+
+\[
+\eta_{\rm motor}
+\]
+
+随机化。
+
+不要一次把所有困难条件打开。
+
+---
+
+# 18. Stage III：Safety Stress Training
+
+最后加入：
+
+- gust；
+- turbulence；
+- sensor noise；
+- actuator dynamics；
+- mass-estimation error；
+- aerodynamic-model error；
+- sampling jitter；
+- observation delay；
+- dropped samples。
+
+这一步主要训练：
+
+\[
+Q_C
+\]
+
+以及 Actor 的 risk awareness。
+
+---
+
+# 19. 正式 Case 1：Nominal 对比实验
+
+训练结束后固定模型。
+
+所有方法使用相同初始状态。
+
+比较：
+
+1. Fixed Airspeed Schedule
+2. Physics Prior Only
+3. Vanilla TD3
+4. CA-TD3
+5. **CA-LSC-TD3**
+
+统计：
+
+\[
+E_{\rm trans}
+\]
+
+\[
+T_{\rm trans}
+\]
+
+\[
+\Delta h_{\max}
+\]
+
+\[
+RMSE_\theta
+\]
+
+\[
+M_{\alpha,\min}
+\]
+
+\[
+J_\lambda
+\]
+
+这组回答：
+
+> 完整方法正常情况下性能是不是更好。
+
+---
+
+# 20. Case 2：Realistic Generalization
+
+这一组：
+
+\[
+\boxed{\text{不重新训练}}
+\]
+
+直接把训练好的 policy 拿来测试。
+
+加入：
+
+- wind；
+- gust；
+- turbulence；
+- sensor noise；
+- actuator lag；
+- measurement delay；
+- observation dropout；
+- sampling jitter。
+
+尤其针对 CfC：
+
+比较：
+
+\[
+MLP-TD3
+\]
+
+\[
+LSTM-TD3
+\]
+
+\[
+CfC-TD3
+\]
+
+重点看：
+
+\[
+SR
+\]
+
+\[
+E
+\]
+
+\[
+\Delta h
+\]
+
+以及：
+
+\[
+T_{\rm infer}
+\]
+
+这样才真正证明液态网络有价值。
+
+---
+
+# 21. Case 3：1000 次 Monte Carlo
+
+这一组就是论文的鲁棒性主实验。
+
+建议：
+
+\[
+\boxed{N=1000}
+\]
+
+随机：
+
+\[
+m/m_0\sim U(0.85,1.25)
+\]
+
+\[
+J/J_0\sim U(0.9,1.1)
+\]
+
+\[
+C_L^{real}/C_L^{model}
+\sim U(0.85,1.15)
+\]
+
+\[
+C_{m_{\delta_e}}^{real}/C_{m_{\delta_e}}^{model}
+\sim U(0.85,1.15)
+\]
+
+\[
+(\hat m-m)/m
+\sim U(-0.1,0.1)
+\]
+
+\[
+V_w\sim U(0,10)m/s
+\]
+
+同时随机：
+
+- gust seed；
+- turbulence seed；
+- sensor noise；
+- motor efficiency；
+- actuator time constant；
+- delay。
+
+你参考的 CEP 论文也使用了 1000 次 Monte Carlo，并对质量、惯量及随机扰动进行评估，所以这套实验结构非常适合沿用。
+
+最终不要只给 mean。
+
+至少：
+
+\[
+Mean\pm Std
+\]
+
+以及：
+
+\[
+P95
+\]
+
+和：
+
+\[
+SR
+\]
+
+---
+
+# 22. Case 4：完整消融实验
+
+最后逐个拆模块。
+
+建议至少：
+
+| 编号 | 方法 |
+|---|---|
+| A0 | Vanilla TD3 |
+| A1 | TD3 + \(\eta_L,\eta_C\) |
+| A2 | + Physics Residual |
+| A3 | + CfC |
+| A4 | + Twin Safety Critics |
+| A5 | + Hard Safety Shield |
+| A6 | Full CA-LSC-TD3 |
+
+另外专门做：
+
+\[
+MLP
+\]
+
+vs
+
+\[
+LSTM
+\]
+
+vs
+
+\[
+CfC
+\]
+
+这样你的每个创新点都有独立证据。
+
+---
+
+# 23. Safety Critic 一定记录这个指标
+
+定义：
+
+\[
+\boxed{
+IR=
+\frac{N_{\rm shield}}
+{N_{\rm action}}
+}
+\]
+
+也就是 Safety Shield intervention rate。
+
+你最终希望得到：
+
+Vanilla TD3：
+
+\[
+IR\text{ 高}
+\]
+
+CA-LSC-TD3：
+
+\[
+IR\text{ 低}
+\]
+
+同时：
+
+\[
+SR\text{ 高}
+\]
+
+这就说明：
+
+> **不是 Hard Shield 一直在救 TD3，而是 Safety Critic 真正让策略自己学会了安全。**
+
+---
+
+# 24. 最终论文里最关键的几张结果图
+
+建议按这个顺序做。
+
+第一张：
+
+\[
+V_a-\lambda-E
+\]
+
+热图。
+
+第二张：
+
+\[
+V_a-\lambda-\Delta h
+\]
+
+热图。
+
+第三张：
+
+\[
+V_a
+\quad vs\quad
+(\eta_L,\eta_C)
+\]
+
+转换可行性比较。
+
+第四张训练曲线：
+
+\[
+Reward
+\]
+
+和：
+
+\[
+Safety\ Cost
+\]
+
+第五张最重要：
+
+\[
+\boxed{
+V_a(t),
+\eta_L(t),
+\eta_C(t),
+\lambda_{\rm phy}(t),
+\lambda_d(t),
+\lambda_{\rm exec}(t)
+}
+\]
+
+这张图能直接展示：
+
+\[
+V_a\uparrow
+\]
+
+↓
+
+\[
+\eta_L\uparrow
+\]
+
+↓
+
+\[
+\eta_C\uparrow
+\]
+
+↓
+
+\[
+\lambda_{\rm phy}\uparrow
+\]
+
+↓
+
+TD3 residual 修正
+
+↓
+
+\[
+\lambda_{\rm exec}\uparrow
+\]
+
+↓
+
+lift rotors 卸载。
+
+第六张：
+
+\[
+h,\quad
+\theta,\quad
+\alpha
+\]
+
+第七张：
+
+\[
+P_{\rm lift},
+P_{\rm pusher},
+P_{\rm total}
+\]
+
+第八张 Monte Carlo 箱线图 / CDF。
+
+第九张消融结果。
+
+---
+
+# 25. 你真正开始做的时候，我建议严格按这个先后顺序
+
+最实用的执行路线就是：
+
+\[
+\boxed{\textbf{阶段 1}}
+\]
+
+先把普通 VTOL transition 跑通。
+
+↓
+
+\[
+\boxed{\textbf{阶段 2}}
+\]
+
+完成：
+
+\[
+V_a-\lambda
+\]
+
+扫描。
+
+↓
+
+\[
+\boxed{\textbf{阶段 3}}
+\]
+
+实现并验证：
+
+\[
+\eta_L
+\]
+
+↓
+
+\[
+\boxed{\textbf{阶段 4}}
+\]
+
+实现 Shadow FW Controller +：
+
+\[
+\eta_C
+\]
+
+↓
+
+\[
+\boxed{\textbf{阶段 5}}
+\]
+
+实现：
+
+\[
+\lambda_{\rm phy}
+\]
+
+看看**完全不用 RL**能不能正常转换。
+
+↓
+
+\[
+\boxed{\textbf{阶段 6}}
+\]
+
+加入普通 MLP-TD3 residual。
+
+↓
+
+\[
+\boxed{\textbf{阶段 7}}
+\]
+
+替换成 CfC Actor/Critic。
+
+↓
+
+\[
+\boxed{\textbf{阶段 8}}
+\]
+
+增加：
+
+\[
+Q_{C1},Q_{C2}
+\]
+
+Twin Safety Critics。
+
+↓
+
+\[
+\boxed{\textbf{阶段 9}}
+\]
+
+增加 Lagrangian safety constraint。
+
+↓
+
+\[
+\boxed{\textbf{阶段 10}}
+\]
+
+最后再加 Hard Safety Shield。
+
+↓
+
+最后才做：
+
+\[
+\boxed{
+Case1
+\rightarrow
+Case2
+\rightarrow
+1000\ Monte\ Carlo
+\rightarrow
+Ablation
+}
+\]
+
+**千万不要同时把 CfC、四 Critic、Safety Shield、Reward、\(\eta_L\)、\(\eta_C\) 全部写完以后第一次一起跑。** 一旦训练不收敛，你根本不知道是哪一层错了。
+
+最稳的开发顺序实际上是：
+
+\[
+\boxed{
+\text{Traditional control}
+\rightarrow
+\eta_L
+\rightarrow
+\eta_C
+\rightarrow
+Physics\ Prior
+\rightarrow
+Residual\ TD3
+\rightarrow
+CfC
+\rightarrow
+Safety\ Critic
+\rightarrow
+Hard\ Shield
+}
+\]
+
+这也是我建议你接下来真正开始写代码时采用的顺序。这样每增加一个模块，都可以保存一次结果，并且这些中间版本将来恰好就是你的**消融实验 A0–A6**，不会浪费任何工作量。

@@ -1,0 +1,10 @@
+diff --git a/msg/NormalizedUnsignedSetpoint.msg b/msg/NormalizedUnsignedSetpoint.msg
+index 10193b8..6255e16 100644
+--- a/msg/NormalizedUnsignedSetpoint.msg
++++ b/msg/NormalizedUnsignedSetpoint.msg
+@@ -2,4 +2,4 @@ uint64 timestamp        		# time since system start (microseconds)
+ 
+ float32 normalized_setpoint          	# [0, 1]
+ 
+-# TOPICS flaps_setpoint spoilers_setpoint
++# TOPICS flaps_setpoint spoilers_setpoint lift_rotor_unloading_setpoint lift_rotor_unloading_status lift_rotor_unloading_active pusher_throttle_setpoint pusher_throttle_status pusher_throttle_active vtol_mc_pitch_weight vtol_fw_pitch_weight

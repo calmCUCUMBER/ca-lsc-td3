@@ -1,0 +1,13 @@
+repositories:
+  PX4-Autopilot:
+    type: git
+    url: https://github.com/PX4/PX4-Autopilot.git
+    version: 4817c0618a1286846116e90c6eb8919efaa013cf
+  Micro-XRCE-DDS-Agent:
+    type: git
+    url: https://github.com/eProsima/Micro-XRCE-DDS-Agent.git
+    version: 73622810d984349b80bbac0ef55fc0b694d62222
+  ros2_ws/src/px4_msgs:
+    type: git
+    url: https://github.com/PX4/px4_msgs.git
+    version: a1045ec4feb6d709bdecaf3895f1d5b43a5dabb8

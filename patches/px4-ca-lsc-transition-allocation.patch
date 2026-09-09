@@ -1,0 +1,687 @@
+diff --git a/ROMFS/px4fmu_common/init.d-posix/rcS b/ROMFS/px4fmu_common/init.d-posix/rcS
+index 0fd28a0f13..7ffcab1cd8 100644
+--- a/ROMFS/px4fmu_common/init.d-posix/rcS
++++ b/ROMFS/px4fmu_common/init.d-posix/rcS
+@@ -300,6 +300,13 @@ then
+ else
+ 	param set UXRCE_DDS_DOM_ID 0
+ fi
++if [ -n "$PX4_UXRCE_DDS_SYNCT" ]
++then
++	# Allow external launch files to disable XRCE-DDS wall-clock time sync
++	# before the client starts. This is required when ROS 2 is driven by
++	# Gazebo /clock for accelerated simulation.
++	param set UXRCE_DDS_SYNCT $PX4_UXRCE_DDS_SYNCT
++fi
+ uxrce_dds_port=8888
+ if [ -n "$PX4_UXRCE_DDS_PORT" ]
+ then
+diff --git a/msg/NormalizedUnsignedSetpoint.msg b/msg/NormalizedUnsignedSetpoint.msg
+index 10193b8cca..0ba43fcf82 100644
+--- a/msg/NormalizedUnsignedSetpoint.msg
++++ b/msg/NormalizedUnsignedSetpoint.msg
+@@ -2,4 +2,4 @@ uint64 timestamp        		# time since system start (microseconds)
+ 
+ float32 normalized_setpoint          	# [0, 1]
+ 
+-# TOPICS flaps_setpoint spoilers_setpoint
++# TOPICS normalized_unsigned_setpoint flaps_setpoint spoilers_setpoint lift_rotor_unloading_setpoint lift_rotor_unloading_status lift_rotor_unloading_active pusher_throttle_setpoint pusher_throttle_status pusher_throttle_active vtol_mc_pitch_weight vtol_fw_pitch_weight
+diff --git a/platforms/posix/src/px4/common/lockstep_scheduler/CMakeLists.txt b/platforms/posix/src/px4/common/lockstep_scheduler/CMakeLists.txt
+index 15c40a2e99..1adf45fd94 100644
+--- a/platforms/posix/src/px4/common/lockstep_scheduler/CMakeLists.txt
++++ b/platforms/posix/src/px4/common/lockstep_scheduler/CMakeLists.txt
+@@ -1,4 +1,4 @@
+-cmake_minimum_required(VERSION 2.8.12)
++cmake_minimum_required(VERSION 3.10)
+ 
+ # We want to test the lockstep schedule even if it is not used otherwise.
+ px4_add_library(lockstep_scheduler
+diff --git a/platforms/posix/src/px4/common/lockstep_scheduler/test/CMakeLists.txt b/platforms/posix/src/px4/common/lockstep_scheduler/test/CMakeLists.txt
+index ea779efc9e..ffadd34e9d 100644
+--- a/platforms/posix/src/px4/common/lockstep_scheduler/test/CMakeLists.txt
++++ b/platforms/posix/src/px4/common/lockstep_scheduler/test/CMakeLists.txt
+@@ -1,4 +1,4 @@
+-cmake_minimum_required(VERSION 2.8.12)
++cmake_minimum_required(VERSION 3.10)
+ 
+ add_executable(lockstep_scheduler_test
+     src/lockstep_scheduler_test.cpp
+diff --git a/src/modules/simulation/gz_bridge/GZMixingInterfaceWheel.cpp b/src/modules/simulation/gz_bridge/GZMixingInterfaceWheel.cpp
+index 2fed14dfe7..92282f9cce 100644
+--- a/src/modules/simulation/gz_bridge/GZMixingInterfaceWheel.cpp
++++ b/src/modules/simulation/gz_bridge/GZMixingInterfaceWheel.cpp
+@@ -80,7 +80,7 @@ bool GZMixingInterfaceWheel::updateOutputs(bool stop_wheels, uint16_t outputs[MA
+ 			// Offsetting the output allows for negative values despite unsigned integer to reverse the wheels
+ 			static constexpr float output_offset = 100.0f;
+ 			float scaled_output = (float)outputs[i] - output_offset;
+-			wheel_velocity_message.set_velocity(i, scaled_output);
++			wheel_velocity_message.set_velocity(i, (double)scaled_output);
+ 		}
+ 
+ 
+diff --git a/src/modules/uxrce_dds_client/dds_topics.yaml b/src/modules/uxrce_dds_client/dds_topics.yaml
+index eb0d86cb0c..c0c83fc854 100644
+--- a/src/modules/uxrce_dds_client/dds_topics.yaml
++++ b/src/modules/uxrce_dds_client/dds_topics.yaml
+@@ -20,6 +20,46 @@ publications:
+   - topic: /fmu/out/battery_status
+     type: px4_msgs::msg::BatteryStatus
+ 
++  - topic: /fmu/out/esc_status
++    type: px4_msgs::msg::EscStatus
++
++  - topic: /fmu/out/actuator_servos
++    type: px4_msgs::msg::ActuatorServos
++
++  - topic: /fmu/out/actuator_motors
++    type: px4_msgs::msg::ActuatorMotors
++
++  - topic: /fmu/out/vehicle_thrust_setpoint
++    type: px4_msgs::msg::VehicleThrustSetpoint
++
++  - topic: /fmu/out/vehicle_attitude_setpoint
++    type: px4_msgs::msg::VehicleAttitudeSetpoint
++
++  - topic: /fmu/out/lift_rotor_unloading_status
++    type: px4_msgs::msg::NormalizedUnsignedSetpoint
++
++  - topic: /fmu/out/lift_rotor_unloading_active
++    type: px4_msgs::msg::NormalizedUnsignedSetpoint
++
++  - topic: /fmu/out/pusher_throttle_status
++    type: px4_msgs::msg::NormalizedUnsignedSetpoint
++
++  - topic: /fmu/out/pusher_throttle_active
++    type: px4_msgs::msg::NormalizedUnsignedSetpoint
++
++  - topic: /fmu/out/vtol_mc_pitch_weight
++    type: px4_msgs::msg::NormalizedUnsignedSetpoint
++
++  - topic: /fmu/out/vtol_fw_pitch_weight
++    type: px4_msgs::msg::NormalizedUnsignedSetpoint
++
++  # These are normalized controller demands, not physical moments in N m.
++  - topic: /fmu/out/vehicle_torque_setpoint_virtual_mc
++    type: px4_msgs::msg::VehicleTorqueSetpoint
++
++  - topic: /fmu/out/vehicle_torque_setpoint_virtual_fw
++    type: px4_msgs::msg::VehicleTorqueSetpoint
++
+   - topic: /fmu/out/collision_constraints
+     type: px4_msgs::msg::CollisionConstraints
+ 
+@@ -44,8 +84,8 @@ publications:
+   - topic: /fmu/out/timesync_status
+     type: px4_msgs::msg::TimesyncStatus
+ 
+-  # - topic: /fmu/out/vehicle_angular_velocity
+-  #   type: px4_msgs::msg::VehicleAngularVelocity
++  - topic: /fmu/out/vehicle_angular_velocity
++    type: px4_msgs::msg::VehicleAngularVelocity
+ 
+   - topic: /fmu/out/vehicle_attitude
+     type: px4_msgs::msg::VehicleAttitude
+@@ -71,6 +111,9 @@ publications:
+   - topic: /fmu/out/vehicle_status
+     type: px4_msgs::msg::VehicleStatus
+ 
++  - topic: /fmu/out/vtol_vehicle_status
++    type: px4_msgs::msg::VtolVehicleStatus
++
+   - topic: /fmu/out/vehicle_trajectory_waypoint_desired
+     type: px4_msgs::msg::VehicleTrajectoryWaypoint
+ 
+@@ -154,6 +197,12 @@ subscriptions:
+   - topic: /fmu/in/vehicle_torque_setpoint
+     type: px4_msgs::msg::VehicleTorqueSetpoint
+ 
++  - topic: /fmu/in/lift_rotor_unloading_setpoint
++    type: px4_msgs::msg::NormalizedUnsignedSetpoint
++
++  - topic: /fmu/in/pusher_throttle_setpoint
++    type: px4_msgs::msg::NormalizedUnsignedSetpoint
++
+   - topic: /fmu/in/actuator_motors
+     type: px4_msgs::msg::ActuatorMotors
+ 
+diff --git a/src/modules/vtol_att_control/standard.cpp b/src/modules/vtol_att_control/standard.cpp
+index 84606aad43..29dc187bf2 100644
+--- a/src/modules/vtol_att_control/standard.cpp
++++ b/src/modules/vtol_att_control/standard.cpp
+@@ -62,6 +62,198 @@ Standard::parameters_update()
+ 	_param_vt_b_trans_ramp.set(math::min(_param_vt_b_trans_ramp.get(), _param_vt_b_trans_dur.get()));
+ }
+ 
++void
++Standard::publish_pitch_control_weights()
++{
++	const hrt_abstime now = hrt_absolute_time();
++	const float mc_weight = math::constrain(_mc_pitch_weight, 0.0f, 1.0f);
++
++	normalized_unsigned_setpoint_s mc_status{};
++	mc_status.timestamp = now;
++	mc_status.normalized_setpoint = mc_weight;
++	_mc_pitch_weight_pub.publish(mc_status);
++
++	normalized_unsigned_setpoint_s fw_status{};
++	fw_status.timestamp = now;
++	fw_status.normalized_setpoint = 1.0f - mc_weight;
++	_fw_pitch_weight_pub.publish(fw_status);
++}
++
++void
++Standard::apply_lambda_attitude_allocation()
++{
++	if (_vtol_mode != vtol_mode::TRANSITION_TO_FW
++	    || !_lift_unloading_command_valid) {
++		return;
++	}
++
++	const float lambda_0 = math::constrain(_param_vt_unld_w0.get(), 0.0f, 1.0f);
++	const float lambda_1 = math::constrain(_param_vt_unld_w1.get(), 0.0f, 1.0f);
++	float fw_weight = _lift_unloading_exec;
++
++	if (lambda_1 > lambda_0 + FLT_EPSILON) {
++		fw_weight = (_lift_unloading_exec - lambda_0) / (lambda_1 - lambda_0);
++	}
++
++	fw_weight = math::constrain(fw_weight, 0.0f, 1.0f);
++	const float mc_weight = 1.0f - fw_weight;
++
++	// Lambda is the single transition-allocation variable while the external
++	// command is active.  Do not leave PX4's airspeed schedule competing with
++	// it on any attitude axis.  The collective path below still uses the
++	// physical unloading value (1-lambda), not the remapped attitude weight.
++	_mc_roll_weight = mc_weight;
++	_mc_pitch_weight = mc_weight;
++	_mc_yaw_weight = mc_weight;
++	_mc_throttle_weight = 1.0f - _lift_unloading_exec;
++}
++
++void
++Standard::update_lift_rotor_unloading()
++{
++	const hrt_abstime now = hrt_absolute_time();
++	const bool forward_transition = _vtol_mode == vtol_mode::TRANSITION_TO_FW;
++	normalized_unsigned_setpoint_s command{};
++
++	if (_lift_unloading_setpoint_sub.update(&command)) {
++		const bool input_valid = PX4_ISFINITE(command.normalized_setpoint)
++					 && command.normalized_setpoint >= 0.0f
++					 && command.normalized_setpoint <= 1.0f
++					 && command.timestamp <= now + 100_ms
++					 && command.timestamp + 500_ms >= now
++					 && forward_transition;
++
++		if (input_valid) {
++			_lift_unloading_target = command.normalized_setpoint;
++			_last_lift_unloading_command = now;
++			_lift_unloading_command_valid = true;
++			_lift_unloading_override_engaged = true;
++
++		} else {
++			// Reject malformed, out-of-range, or stale input.  In particular,
++			// never clamp a large positive value into a full-unload command.
++			_lift_unloading_target = 0.0f;
++			_lift_unloading_exec = 0.0f;
++			_lift_unloading_command_valid = false;
++		}
++	}
++
++	const bool command_fresh = _lift_unloading_command_valid
++				   && now <= _last_lift_unloading_command + 500_ms;
++	if (!forward_transition) {
++		_lift_unloading_target = 0.0f;
++		_lift_unloading_exec = 0.0f;
++		_lift_unloading_command_valid = false;
++		_lift_unloading_override_engaged = false;
++
++	} else if (!command_fresh || _vtol_vehicle_status->fixed_wing_system_failure) {
++		// Loss of the companion command is fail-safe: restore rotor support
++		// immediately instead of waiting for a normal rate limiter.
++		_lift_unloading_target = 0.0f;
++		_lift_unloading_exec = 0.0f;
++		_lift_unloading_command_valid = false;
++
++	} else {
++		const float dt = _last_lift_unloading_update == 0
++				 ? 0.0f
++				 : math::constrain((now - _last_lift_unloading_update) * 1e-6f, 0.0f, 0.1f);
++		constexpr float unload_rate = 0.25f;  // lambda / s
++		constexpr float restore_rate = 2.0f;  // lambda / s
++
++		if (_lift_unloading_target > _lift_unloading_exec) {
++			_lift_unloading_exec = math::min(
++				_lift_unloading_target,
++				_lift_unloading_exec + unload_rate * dt);
++
++		} else {
++			_lift_unloading_exec = math::max(
++				_lift_unloading_target,
++				_lift_unloading_exec - restore_rate * dt);
++		}
++	}
++
++	_last_lift_unloading_update = now;
++
++	normalized_unsigned_setpoint_s status{};
++	status.timestamp = now;
++
++	if (_lift_unloading_override_engaged && forward_transition) {
++		status.normalized_setpoint = _lift_unloading_exec;
++
++	} else if (_vtol_mode == vtol_mode::MC_MODE) {
++		status.normalized_setpoint = 0.0f;
++
++	} else if (_vtol_mode == vtol_mode::FW_MODE) {
++		status.normalized_setpoint = 1.0f;
++
++	} else {
++		status.normalized_setpoint = math::constrain(1.0f - _mc_throttle_weight, 0.0f, 1.0f);
++	}
++
++	_lift_unloading_status_pub.publish(status);
++
++	normalized_unsigned_setpoint_s active{};
++	active.timestamp = now;
++	active.normalized_setpoint =
++		(_lift_unloading_command_valid && forward_transition) ? 1.0f : 0.0f;
++	_lift_unloading_active_pub.publish(active);
++}
++
++void
++Standard::update_pusher_throttle_override()
++{
++	const hrt_abstime now = hrt_absolute_time();
++	const bool forward_transition = _vtol_mode == vtol_mode::TRANSITION_TO_FW;
++	normalized_unsigned_setpoint_s command{};
++
++	if (_pusher_throttle_setpoint_sub.update(&command)) {
++		const bool input_valid = PX4_ISFINITE(command.normalized_setpoint)
++					 && command.normalized_setpoint >= 0.0f
++					 && command.normalized_setpoint <= 1.0f
++					 && command.timestamp <= now + 100_ms
++					 && command.timestamp + 500_ms >= now
++					 && forward_transition
++					 && _param_vt_unld_test_en.get();
++
++		if (input_valid) {
++			_pusher_throttle_target = command.normalized_setpoint;
++			_last_pusher_throttle_command = now;
++			_pusher_throttle_command_valid = true;
++
++		} else {
++			_pusher_throttle_command_valid = false;
++		}
++	}
++
++	const bool command_fresh = _pusher_throttle_command_valid
++				   && now <= _last_pusher_throttle_command + 500_ms;
++	_pusher_throttle_override_active =
++		forward_transition
++		&& _param_vt_unld_test_en.get()
++		&& command_fresh
++		&& !_vtol_vehicle_status->fixed_wing_system_failure;
++
++	if (_pusher_throttle_override_active) {
++		_pusher_throttle = math::constrain(_pusher_throttle_target, 0.0f, 1.0f);
++	}
++
++	if (!forward_transition) {
++		_pusher_throttle_target = 0.0f;
++		_pusher_throttle_command_valid = false;
++		_pusher_throttle_override_active = false;
++	}
++
++	normalized_unsigned_setpoint_s status{};
++	status.timestamp = now;
++	status.normalized_setpoint = math::constrain(_pusher_throttle, 0.0f, 1.0f);
++	_pusher_throttle_status_pub.publish(status);
++
++	normalized_unsigned_setpoint_s active{};
++	active.timestamp = now;
++	active.normalized_setpoint = _pusher_throttle_override_active ? 1.0f : 0.0f;
++	_pusher_throttle_active_pub.publish(active);
++}
++
+ void Standard::update_vtol_state()
+ {
+ 	/* After flipping the switch the vehicle will start the pusher (or tractor) motor, picking up
+@@ -130,8 +322,12 @@ void Standard::update_vtol_state()
+ 			mc_weight = 0.0f;
+ 
+ 		} else if (_vtol_mode == vtol_mode::TRANSITION_TO_FW) {
++			const bool controlled_unloading_hold =
++				_param_vt_unld_test_en.get()
++				&& _lift_unloading_override_engaged
++				&& _lift_unloading_command_valid;
+ 
+-			if (isFrontTransitionCompleted()) {
++			if (!controlled_unloading_hold && isFrontTransitionCompleted()) {
+ 				_vtol_mode = vtol_mode::FW_MODE;
+ 
+ 				// don't set pusher throttle here as it's being ramped up elsewhere
+@@ -172,6 +368,24 @@ void Standard::update_transition_state()
+ 
+ 	VtolType::update_transition_state();
+ 
++	if (_vtol_mode == vtol_mode::TRANSITION_TO_FW) {
++		if (_param_vt_psher_slew.get() <= FLT_EPSILON) {
++			// The pusher is the forward-acceleration source.  It must not be
++			// blocked by later virtual-attitude freshness checks, otherwise a
++			// controlled lambda test can sit in transition with Va near zero.
++			_pusher_throttle = _param_vt_f_trans_thr.get();
++
++		} else if (_pusher_throttle <= _param_vt_f_trans_thr.get()) {
++			const float dt = math::min((now - _last_time_pusher_transition_update) / 1e6f, 0.05f);
++			_pusher_throttle = math::min(_pusher_throttle +
++						     _param_vt_psher_slew.get() * dt, _param_vt_f_trans_thr.get());
++
++			_last_time_pusher_transition_update = now;
++		}
++	}
++
++	update_pusher_throttle_override();
++
+ 	// we get attitude setpoint from a multirotor flighttask if climbrate is controlled.
+ 	// in any other case the fixed wing attitude controller publishes attitude setpoint from manual stick input.
+ 	if (_v_control_mode->flag_control_climb_rate_enabled) {
+@@ -194,19 +408,6 @@ void Standard::update_transition_state()
+ 	}
+ 
+ 	if (_vtol_mode == vtol_mode::TRANSITION_TO_FW) {
+-		if (_param_vt_psher_slew.get() <= FLT_EPSILON) {
+-			// just set the final target throttle value
+-			_pusher_throttle = _param_vt_f_trans_thr.get();
+-
+-		} else if (_pusher_throttle <= _param_vt_f_trans_thr.get()) {
+-			// ramp up throttle to the target throttle value
+-			const float dt = math::min((now - _last_time_pusher_transition_update) / 1e6f, 0.05f);
+-			_pusher_throttle = math::min(_pusher_throttle +
+-						     _param_vt_psher_slew.get() * dt, _param_vt_f_trans_thr.get());
+-
+-			_last_time_pusher_transition_update = now;
+-		}
+-
+ 		_airspeed_trans_blend_margin = getTransitionAirspeed() - getBlendAirspeed();
+ 
+ 		// do blending of mc and fw controls if a blending airspeed has been provided and the minimum transition time has passed
+@@ -226,8 +427,33 @@ void Standard::update_transition_state()
+ 
+ 		}
+ 
+-		// ramp up FW_PSP_OFF
+-		_v_att_sp->pitch_body = math::radians(_param_fw_psp_off.get()) * (1.0f - mc_weight);
++		const bool controlled_unloading_hold =
++			_param_vt_unld_test_en.get()
++			&& _lift_unloading_override_engaged
++			&& _lift_unloading_command_valid;
++
++		if (controlled_unloading_hold && PX4_ISFINITE(_local_pos->z)) {
++			if (!PX4_ISFINITE(_controlled_unloading_reference_z)) {
++				_controlled_unloading_reference_z = _local_pos->z;
++			}
++
++			// NED convention: a climb makes both (z-z_ref) and vz
++			// negative, therefore the correction commands nose-down pitch.
++			const float vertical_speed = PX4_ISFINITE(_local_pos->vz) ? _local_pos->vz : 0.0f;
++			const float pitch_degrees = _param_fw_psp_off.get()
++				+ _param_vt_unld_alt_p.get()
++				* (_local_pos->z - _controlled_unloading_reference_z)
++				+ _param_vt_unld_vz_d.get() * vertical_speed;
++			_v_att_sp->pitch_body = math::radians(math::constrain(
++				pitch_degrees,
++				_param_vt_unld_p_min.get(),
++				_param_vt_unld_p_max.get()));
++
++		} else {
++			_controlled_unloading_reference_z = NAN;
++			// Stock transition behaviour outside the experiment-only hold.
++			_v_att_sp->pitch_body = math::radians(_param_fw_psp_off.get()) * (1.0f - mc_weight);
++		}
+ 
+ 		_v_att_sp->thrust_body[0] = _pusher_throttle;
+ 
+@@ -235,6 +461,7 @@ void Standard::update_transition_state()
+ 		q_sp.copyTo(_v_att_sp->q_d);
+ 
+ 	} else if (_vtol_mode == vtol_mode::TRANSITION_TO_MC) {
++		_controlled_unloading_reference_z = NAN;
+ 
+ 		if (_v_control_mode->flag_control_climb_rate_enabled) {
+ 			// control backtransition deceleration using pitch.
+@@ -262,6 +489,7 @@ void Standard::update_transition_state()
+ 
+ void Standard::update_mc_state()
+ {
++	_controlled_unloading_reference_z = NAN;
+ 	VtolType::update_mc_state();
+ 
+ 	_pusher_throttle = VtolType::pusher_assist();
+@@ -269,6 +497,7 @@ void Standard::update_mc_state()
+ 
+ void Standard::update_fw_state()
+ {
++	_controlled_unloading_reference_z = NAN;
+ 	VtolType::update_fw_state();
+ }
+ 
+@@ -278,6 +507,10 @@ void Standard::update_fw_state()
+  */
+ void Standard::fill_actuator_outputs()
+ {
++	update_lift_rotor_unloading();
++	apply_lambda_attitude_allocation();
++	publish_pitch_control_weights();
++
+ 	_torque_setpoint_0->timestamp = hrt_absolute_time();
+ 	_torque_setpoint_0->timestamp_sample = _vehicle_torque_setpoint_virtual_mc->timestamp_sample;
+ 	_torque_setpoint_0->xyz[0] = 0.f;
+@@ -323,12 +556,18 @@ void Standard::fill_actuator_outputs()
+ 	case vtol_mode::TRANSITION_TO_FW:
+ 
+ 	// FALLTHROUGH
+-	case vtol_mode::TRANSITION_TO_MC:
++	case vtol_mode::TRANSITION_TO_MC: {
+ 		// MC actuators:
+ 		_torque_setpoint_0->xyz[0] = _vehicle_torque_setpoint_virtual_mc->xyz[0] * _mc_roll_weight;
+ 		_torque_setpoint_0->xyz[1] = _vehicle_torque_setpoint_virtual_mc->xyz[1] * _mc_pitch_weight;
+ 		_torque_setpoint_0->xyz[2] = _vehicle_torque_setpoint_virtual_mc->xyz[2] * _mc_yaw_weight;
+-		_thrust_setpoint_0->xyz[2] = _vehicle_thrust_setpoint_virtual_mc->xyz[2] * _mc_throttle_weight;
++		// The same executed transition-allocation lambda drives collective
++		// unloading and, through apply_lambda_attitude_allocation(), the MC/FW
++		// attitude weights.  Pusher thrust remains independently controlled.
++		const float collective_weight = _lift_unloading_override_engaged
++						? 1.0f - _lift_unloading_exec
++						: _mc_throttle_weight;
++		_thrust_setpoint_0->xyz[2] = _vehicle_thrust_setpoint_virtual_mc->xyz[2] * collective_weight;
+ 
+ 		// FW actuators
+ 		_torque_setpoint_1->xyz[0] = _vehicle_torque_setpoint_virtual_fw->xyz[0] * (1.f - _mc_roll_weight);
+@@ -337,6 +576,7 @@ void Standard::fill_actuator_outputs()
+ 		_thrust_setpoint_0->xyz[0] = _pusher_throttle;
+ 
+ 		break;
++	}
+ 
+ 	case vtol_mode::FW_MODE:
+ 
+diff --git a/src/modules/vtol_att_control/standard.h b/src/modules/vtol_att_control/standard.h
+index 6136f87207..5887b3b48e 100644
+--- a/src/modules/vtol_att_control/standard.h
++++ b/src/modules/vtol_att_control/standard.h
+@@ -47,6 +47,10 @@
+ #define STANDARD_H
+ #include "vtol_type.h"
+ 
++#include <uORB/Publication.hpp>
++#include <uORB/Subscription.hpp>
++#include <uORB/topics/normalized_unsigned_setpoint.h>
++
+ class Standard : public VtolType
+ {
+ 
+@@ -78,12 +82,53 @@ private:
+ 	float _airspeed_trans_blend_margin{0.0f};
+ 	hrt_abstime _last_time_pusher_transition_update{0};
+ 
++	// External continuous transition-allocation command used only during the
++	// forward transition.  The same executed lambda synchronously allocates
++	// lift collective and MC/FW attitude authority.  A stale or invalid input
++	// immediately restores full rotor support and the stock PX4 blending path.
++	uORB::Subscription _lift_unloading_setpoint_sub{ORB_ID(lift_rotor_unloading_setpoint)};
++	uORB::Publication<normalized_unsigned_setpoint_s> _lift_unloading_status_pub{
++		ORB_ID(lift_rotor_unloading_status)};
++	uORB::Publication<normalized_unsigned_setpoint_s> _lift_unloading_active_pub{
++		ORB_ID(lift_rotor_unloading_active)};
++	uORB::Subscription _pusher_throttle_setpoint_sub{ORB_ID(pusher_throttle_setpoint)};
++	uORB::Publication<normalized_unsigned_setpoint_s> _pusher_throttle_status_pub{
++		ORB_ID(pusher_throttle_status)};
++	uORB::Publication<normalized_unsigned_setpoint_s> _pusher_throttle_active_pub{
++		ORB_ID(pusher_throttle_active)};
++	uORB::Publication<normalized_unsigned_setpoint_s> _mc_pitch_weight_pub{
++		ORB_ID(vtol_mc_pitch_weight)};
++	uORB::Publication<normalized_unsigned_setpoint_s> _fw_pitch_weight_pub{
++		ORB_ID(vtol_fw_pitch_weight)};
++	float _lift_unloading_target{0.0f};
++	float _lift_unloading_exec{0.0f};
++	hrt_abstime _last_lift_unloading_command{0};
++	hrt_abstime _last_lift_unloading_update{0};
++	bool _lift_unloading_command_valid{false};
++	bool _lift_unloading_override_engaged{false};
++	float _pusher_throttle_target{0.0f};
++	hrt_abstime _last_pusher_throttle_command{0};
++	bool _pusher_throttle_command_valid{false};
++	bool _pusher_throttle_override_active{false};
++	float _controlled_unloading_reference_z{NAN};
++
+ 	void parameters_update() override;
++	void update_lift_rotor_unloading();
++	void update_pusher_throttle_override();
++	void publish_pitch_control_weights();
++	void apply_lambda_attitude_allocation();
+ 
+ 	DEFINE_PARAMETERS_CUSTOM_PARENT(VtolType,
+ 					(ParamFloat<px4::params::VT_PSHER_SLEW>) _param_vt_psher_slew,
+ 					(ParamFloat<px4::params::VT_B_TRANS_RAMP>) _param_vt_b_trans_ramp,
+-					(ParamFloat<px4::params::FW_PSP_OFF>) _param_fw_psp_off
++					(ParamFloat<px4::params::FW_PSP_OFF>) _param_fw_psp_off,
++					(ParamBool<px4::params::VT_UNLD_TEST_EN>) _param_vt_unld_test_en,
++					(ParamFloat<px4::params::VT_UNLD_ALT_P>) _param_vt_unld_alt_p,
++					(ParamFloat<px4::params::VT_UNLD_VZ_D>) _param_vt_unld_vz_d,
++					(ParamFloat<px4::params::VT_UNLD_P_MIN>) _param_vt_unld_p_min,
++					(ParamFloat<px4::params::VT_UNLD_P_MAX>) _param_vt_unld_p_max,
++					(ParamFloat<px4::params::VT_UNLD_W0>) _param_vt_unld_w0,
++					(ParamFloat<px4::params::VT_UNLD_W1>) _param_vt_unld_w1
+ 				       )
+ };
+ #endif
+diff --git a/src/modules/vtol_att_control/standard_params.c b/src/modules/vtol_att_control/standard_params.c
+index f46f644f18..3abb0ec500 100644
+--- a/src/modules/vtol_att_control/standard_params.c
++++ b/src/modules/vtol_att_control/standard_params.c
+@@ -106,3 +106,104 @@ PARAM_DEFINE_FLOAT(VT_B_TRANS_RAMP, 3.0f);
+  * @group VTOL Attitude Control
+  */
+ PARAM_DEFINE_FLOAT(VT_PSHER_SLEW, 0.33f);
++
++/**
++ * Hold standard VTOL in front-transition while an external unloading command is active
++ *
++ * This is a simulation/identification mode for controlled lift-rotor unloading
++ * tests.  When enabled, automatic completion to fixed-wing is delayed only
++ * while a fresh, valid external unloading command is actively controlling the
++ * collective path.  Command loss, invalid input, a fixed-wing failure, or the
++ * normal transition timeout retains the existing PX4 recovery behavior.
++ *
++ * @boolean
++ * @reboot_required true
++ * @group VTOL Attitude Control
++ */
++PARAM_DEFINE_INT32(VT_UNLD_TEST_EN, 0);
++
++/**
++ * Controlled-unloading altitude-to-pitch proportional gain
++ *
++ * During VT_UNLD_TEST_EN front-transition holds, the normal PX4 transition
++ * task fixes pitch at FW_PSP_OFF and does not run a fixed-wing altitude loop.
++ * This gain converts NED altitude error into a pitch correction so the wing
++ * can reject excess lift while lambda and airspeed are held for system
++ * identification. It has no effect on normal VTOL transitions.
++ *
++ * @min 0.0
++ * @max 10.0
++ * @increment 0.1
++ * @decimal 1
++ * @group VTOL Attitude Control
++ */
++PARAM_DEFINE_FLOAT(VT_UNLD_ALT_P, 2.0f);
++
++/**
++ * Controlled-unloading vertical-speed pitch damping
++ *
++ * Positive NED vertical speed (descent) commands positive pitch; negative
++ * vertical speed (climb) commands negative pitch.
++ *
++ * @min 0.0
++ * @max 10.0
++ * @increment 0.1
++ * @decimal 1
++ * @group VTOL Attitude Control
++ */
++PARAM_DEFINE_FLOAT(VT_UNLD_VZ_D, 2.0f);
++
++/**
++ * Minimum pitch during a controlled-unloading hold
++ *
++ * @unit deg
++ * @min -20.0
++ * @max 0.0
++ * @increment 0.5
++ * @decimal 1
++ * @group VTOL Attitude Control
++ */
++PARAM_DEFINE_FLOAT(VT_UNLD_P_MIN, -12.0f);
++
++/**
++ * Maximum pitch during a controlled-unloading hold
++ *
++ * @unit deg
++ * @min 0.0
++ * @max 20.0
++ * @increment 0.5
++ * @decimal 1
++ * @group VTOL Attitude Control
++ */
++PARAM_DEFINE_FLOAT(VT_UNLD_P_MAX, 10.0f);
++
++/**
++ * Transition-allocation lambda at which fixed-wing attitude authority starts
++ *
++ * While a fresh external transition-allocation command is active, lambda
++ * synchronously allocates lift-rotor collective and MC/FW attitude authority.
++ * Below this value attitude control remains fully multicopter-dominated.
++ * Stock airspeed blending remains the fail-safe fallback when the external
++ * command is absent or stale.
++ *
++ * @min 0.0
++ * @max 0.9
++ * @increment 0.01
++ * @decimal 2
++ * @group VTOL Attitude Control
++ */
++PARAM_DEFINE_FLOAT(VT_UNLD_W0, 0.10f);
++
++/**
++ * Transition-allocation lambda at which fixed-wing attitude authority is full
++ *
++ * Must be greater than VT_UNLD_W0.  Between the two thresholds the MC/FW
++ * attitude weights change linearly with the executed lambda command.
++ *
++ * @min 0.1
++ * @max 1.0
++ * @increment 0.01
++ * @decimal 2
++ * @group VTOL Attitude Control
++ */
++PARAM_DEFINE_FLOAT(VT_UNLD_W1, 0.90f);

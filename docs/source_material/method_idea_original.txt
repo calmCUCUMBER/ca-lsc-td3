@@ -1,0 +1,3149 @@
+可以。你既然明确选 **路线 B——真正修改 TD3 本体**，那我建议这篇就不要再停留在“TD3 + 新状态量 + Safety Filter”的层级，而是把它收敛成一个真正有算法名字、网络结构变化、Critic 变化、Actor 目标变化，同时又和 VTOL 转换物理机理绑定的完整方法。
+
+而且我刚查了一下最新文献，有一个非常重要的变化必须现在就考虑进去：**2026 年 8 月 17 日刚发表了一篇“Corridor-constrained incremental TD3 for nacelle tilt scheduling in quad-tiltrotor UAV level transition”**，它已经做了“增量 TD3 + 转换走廊 + 速率限制 + 投影”的路线。也就是说，我们现在**不能再把“增量动作 + Safety Projection”当成主要算法创新**，否则非常容易撞车。
+
+所以我建议把你的最终方法正式升级为：
+
+\[
+\boxed{
+\textbf{CA-LSC-TD3}
+}
+\]
+
+即：
+
+> **Control-Authority-Aware Liquid Safety-Constrained TD3**
+
+中文可以暂定：
+
+> **基于控制权感知液态安全约束 TD3 的 Lift+Cruise VTOL 无人机安全节能悬停—巡航转换控制**
+
+这里真正属于“改进 TD3”的部分，我建议固定为三个互相有逻辑关系的改动，而不是堆算法：
+
+\[
+\boxed{
+\text{CfC Liquid Temporal Encoder}
++
+\text{Twin Safety Critics}
++
+\text{Physics-Guided Residual Policy}
+}
+\]
+
+再外接一个**不作为 TD3 算法创新宣称的硬安全层**。
+
+这样整篇论文的创新层次会比现在高一个档次。
+
+---
+
+# 一、先把整篇论文的科学问题彻底定死
+
+这篇论文不再研究：
+
+\[
+V_a=?
+\quad\Rightarrow\quad
+\text{何时切 MC/FW}
+\]
+
+也不研究：
+
+\[
+\text{TD3直接控制所有电机和舵面}
+\]
+
+而研究：
+
+\[
+\boxed{
+\begin{aligned}
+&\text{在机翼逐渐建立承载能力、气动舵面逐渐建立控制能力的过程中，}\\
+&\text{如何根据连续时间飞行状态，自适应确定垂直升力旋翼的最优卸载程度，}\\
+&\text{在满足转换安全约束的同时最小化能耗和转换时间？}
+\end{aligned}}
+\]
+
+整个控制关系明确成：
+
+\[
+\boxed{
+\text{RL 决定“旋翼卸载多少”}
+}
+\]
+
+而不是：
+
+\[
+\text{RL 决定“飞机怎么飞稳”}
+\]
+
+低层飞控仍负责姿态、高度、速度控制。
+
+这一层级思想可以沿用你作为基调的 CEP 论文。那篇论文也是让 TD3 生成高层最优俯仰角参考，而低层 DO-BS 负责稳定和跟踪，并不是让 TD3 直接控制执行器。
+
+但你的**决策对象、物理状态、TD3 网络、约束学习机制全部和它不同**。
+
+---
+
+# 二、首先纠正 \(\lambda\) 的定义：它以后只代表“垂直升力旋翼卸载程度”
+
+这一点我建议彻底定死，不再让一个 \(\lambda\) 同时代表升力交接和姿态控制交接。
+
+定义：
+
+\[
+\boxed{
+\lambda_t\in[0,1]
+}
+\]
+
+称为：
+
+> **Lift-Rotor Unloading Factor**
+
+或者：
+
+> **Vertical-Lift Unloading Factor**
+
+物理意义：
+
+\[
+\lambda=0
+\]
+
+表示垂直升力仍主要由 lift rotors 承担；
+
+\[
+0<\lambda<1
+\]
+
+表示机翼逐渐接管升力；
+
+\[
+\lambda\rightarrow1
+\]
+
+表示垂直旋翼的**名义垂直支撑任务**接近完全卸载。
+
+注意：
+
+\[
+\boxed{
+\lambda\neq \text{MC/FW总控制权比例}
+}
+\]
+
+这样你之前那个逻辑漏洞就消失了。
+
+因为：
+
+\[
+\eta_L
+\]
+
+回答“机翼托得住多少”，
+
+而：
+
+\[
+\eta_C
+\]
+
+回答“舵面控得住多少”。
+
+二者不是同一个物理过程。
+
+---
+
+# 三、重新严谨定义第一个核心变量：机翼垂直承载能力 \(\eta_L\)
+
+你原来的：
+
+\[
+\eta_L=\frac{L}{mg}
+\]
+
+思路对，但论文版本需要更严谨。
+
+首先：
+
+\[
+\bar q=
+\frac12\rho V_a^2
+\]
+
+机翼气动升力估计为：
+
+\[
+\hat L_w
+=
+\bar q S\hat C_L(\alpha)
+\]
+
+考虑飞行航迹角 \(\gamma\) 和滚转角 \(\phi\)，其惯性系竖直方向有效支撑分量近似为：
+
+\[
+\boxed{
+\hat L_z
+=
+\hat L_w
+\cos\gamma
+\cos\phi
+}
+\]
+
+然后定义当前期望的竖直支撑需求：
+
+\[
+F_{z,\mathrm{req}}
+=
+\hat m
+\left(
+g+a_{z,d}
+\right)
+\]
+
+对于你的主要实验——**恒高前向转换**：
+
+\[
+a_{z,d}=0
+\]
+
+于是：
+
+\[
+F_{z,\mathrm{req}}
+=
+\hat m g
+\]
+
+最终定义：
+
+\[
+\boxed{
+\eta_L
+=
+\operatorname{sat}_{[0,1]}
+\left(
+\frac{\hat L_z}
+{F_{z,\mathrm{req}}+\varepsilon}
+\right)
+}
+\]
+
+所以：
+
+\[
+\eta_L=0
+\]
+
+表示当前机翼几乎不能承担竖直载荷；
+
+\[
+\eta_L=0.7
+\]
+
+表示机翼当前可提供约 70% 的名义竖直支撑需求；
+
+\[
+\eta_L\approx1
+\]
+
+表示从**承载能力角度**已经接近 wing-borne flight。
+
+这样它的正式名称我建议叫：
+
+> **Wing Vertical-Support Capability Ratio**
+
+而不要简单叫：
+
+> Wing lift ratio.
+
+---
+
+# 四、这里专门处理质量 \(m\) 的问题
+
+不能在仿真里直接偷偷使用“真实质量”。
+
+算法实际使用：
+
+\[
+\boxed{\hat m}
+\]
+
+也就是估计质量。
+
+论文假设可以写：
+
+> The vehicle mass estimate is assumed to be available from payload configuration information or an onboard mass estimator.
+
+但是实验里面故意设置：
+
+\[
+\hat m\neq m
+\]
+
+例如：
+
+\[
+\frac{\hat m-m}{m}
+\sim
+U(-0.10,0.10)
+\]
+
+这样你验证的是：
+
+> 即使机翼承载能力估计存在误差，策略依然能够可靠完成转换。
+
+这比“payload 从 1.0 倍变成 1.2 倍”强得多。
+
+---
+
+# 五、第二个核心变量 \(\eta_C\)：不能再用原来简单的 \(M_{\max}/M_{\rm req}\)
+
+这是整个方案里我认为应该重点打磨的第二个公式。
+
+## 5.1 首先定义气动舵面的可用控制能力
+
+对于 elevator：
+
+\[
+M_e
+=
+\bar qSc
+C_{m_{\delta_e}}
+\delta_e
+\]
+
+其中：
+
+\[
+\bar q=\frac12\rho V_a^2
+\]
+
+但是我们真正想知道的不是“最大 elevator moment”，而是：
+
+> **按照当前需要修正 pitch 的方向，舵面还有多少剩余控制余度。**
+
+因此定义当前剩余舵偏量。
+
+如果：
+
+\[
+M_{\mathrm{req}}^{FW}>0
+\]
+
+则：
+
+\[
+\Delta\delta_{e,\mathrm{ava}}
+=
+\delta_{e,\max}-\delta_e
+\]
+
+如果：
+
+\[
+M_{\mathrm{req}}^{FW}<0
+\]
+
+则：
+
+\[
+\Delta\delta_{e,\mathrm{ava}}
+=
+\delta_e-\delta_{e,\min}
+\]
+
+于是当前方向的可用气动力矩为：
+
+\[
+\boxed{
+M_{e,\mathrm{ava}}
+=
+\bar qSc
+\left|
+\hat C_{m_{\delta_e}}
+\right|
+\Delta\delta_{e,\mathrm{ava}}
+}
+\]
+
+这比简单写：
+
+\[
+M_{e,\max}
+\]
+
+严谨得多。
+
+---
+
+# 六、最重要的改动：\(M_{\mathrm{req}}^{FW}\) 来自一个 Shadow FW Controller
+
+这是我特别建议你加进去的。
+
+否则会出现：
+
+\[
+\lambda
+\rightarrow
+M_{\mathrm{req}}
+\rightarrow
+\eta_C
+\rightarrow
+\lambda
+\]
+
+这样的循环依赖。
+
+所以我们让固定翼低层 pitch controller **从转换一开始就一直在后台运行**，但是它的输出不一定全部执行。
+
+称为：
+
+> **Shadow Fixed-Wing Pitch Controller**
+
+它计算：
+
+\[
+\boxed{
+M_{\mathrm{req}}^{FW}
+}
+\]
+
+即：
+
+> 如果此刻完全依靠 fixed-wing aerodynamic control，需要多少 pitch control moment？
+
+这个量可以来源于：
+
+\[
+M_{\mathrm{req}}^{FW}
+=
+K_\theta e_\theta
++
+K_qe_q
++
+M_{ff}
+\]
+
+或者你真实飞控输出的 unsaturated pitch moment demand。
+
+重点是：
+
+\[
+\boxed{
+M_{\mathrm{req}}^{FW}
+\text{与当前}\lambda\text{解耦}
+}
+\]
+
+这会让 \(\eta_C\) 的定义非常干净。
+
+---
+
+# 七、正式定义 Aerodynamic Control-Authority Margin
+
+首先定义当前力矩余度：
+
+\[
+r_M
+=
+1-
+\frac{
+|M_{\mathrm{req}}^{FW}|
+}{
+M_{e,\mathrm{ava}}+\varepsilon
+}
+\]
+
+裁剪后：
+
+\[
+\bar r_M
+=
+\operatorname{sat}_{[0,1]}(r_M)
+\]
+
+但是还不能直接拿它当 \(\eta_C\)。
+
+因为：
+
+\[
+M_{\mathrm{req}}^{FW}\rightarrow0
+\]
+
+时，即使飞机静止：
+
+\[
+V_a\rightarrow0
+\]
+
+也可能出现：
+
+\[
+\bar r_M\rightarrow1
+\]
+
+所以还要加入**动态压强有效性**。
+
+定义：
+
+\[
+g_q
+=
+\mathcal S
+(
+\bar q;
+\bar q_0,
+\bar q_1
+)
+\]
+
+其中 \(\mathcal S\) 是平滑门函数。
+
+最终：
+
+\[
+\boxed{
+\eta_C
+=
+g_q
+\operatorname{sat}_{[0,1]}
+\left(
+1-
+\frac{
+|M_{\mathrm{req}}^{FW}|
+}{
+M_{e,\mathrm{ava}}+\varepsilon
+}
+\right)
+}
+\]
+
+于是：
+
+\[
+V_a\rightarrow0
+\Rightarrow
+\bar q\rightarrow0
+\Rightarrow
+\eta_C\rightarrow0
+\]
+
+符合物理规律。
+
+而：
+
+\[
+M_{\mathrm{req}}^{FW}
+\ll
+M_{e,\mathrm{ava}}
+\]
+
+且动态压强充足时：
+
+\[
+\eta_C\rightarrow1
+\]
+
+这时你才能合理地说：
+
+> aerodynamic pitch-control authority has been sufficiently established.
+
+---
+
+# 八、统一定义平滑门函数
+
+为了后面 \(\eta_L\)、\(\eta_C\)、Safety Filter 都使用同一种形式，建议正式定义：
+
+令：
+
+\[
+\xi=
+\frac{x-x_0}{x_1-x_0}
+\]
+
+则：
+
+\[
+\boxed{
+\mathcal S(x;x_0,x_1)
+=
+\begin{cases}
+0,&x\le x_0\\
+3\xi^2-2\xi^3,&x_0<x<x_1\\
+1,&x\ge x_1
+\end{cases}
+}
+\]
+
+这样比大量使用：
+
+\[
+clip()
+\]
+
+更适合论文。
+
+因为边界连续且转换平滑。
+
+---
+
+# 九、引入 Physics-Guided Transition Prior
+
+这一层是我建议你在 TD3 里面真正加入的第二个“算法味”很强的东西。
+
+根据：
+
+\[
+\eta_L
+\]
+
+和：
+
+\[
+\eta_C
+\]
+
+计算一个物理先验：
+
+\[
+g_L=
+\mathcal S
+(
+\eta_L;
+\eta_{L,0},
+\eta_{L,1}
+)
+\]
+
+\[
+g_C=
+\mathcal S
+(
+\eta_C;
+\eta_{C,0},
+\eta_{C,1}
+)
+\]
+
+然后：
+
+\[
+\boxed{
+\lambda_{\mathrm{phy}}
+=
+g_Lg_C
+}
+\]
+
+注意这个：
+
+\[
+\lambda_{\mathrm{phy}}
+\]
+
+不是最终控制命令。
+
+它只是告诉强化学习：
+
+> 根据当前“托得住”和“控得住”的程度，一个物理上合理的初始卸载程度大概在哪里。
+
+TD3 不需要从：
+
+\[
+\lambda\sim U(0,1)
+\]
+
+完全瞎探索。
+
+---
+
+# 十、TD3 不直接输出 \(\lambda\)，而是学习 Physics Residual
+
+这就是：
+
+\[
+\boxed{
+\text{Physics-Guided Residual Policy}
+}
+\]
+
+Actor 输出：
+
+\[
+a_t^{RL}\in[-1,1]
+\]
+
+然后：
+
+\[
+\Delta\lambda_t^{RL}
+=
+\delta_\lambda a_t^{RL}
+\]
+
+最终候选卸载程度：
+
+\[
+\boxed{
+\lambda_d
+=
+\operatorname{sat}_{[0,1]}
+\left(
+\lambda_{\mathrm{phy}}
++
+\Delta\lambda_t^{RL}
+\right)
+}
+\]
+
+这和直接让 TD3 学：
+
+\[
+s_t\rightarrow\lambda
+\]
+
+差别很大。
+
+现在变成：
+
+\[
+\boxed{
+\text{Physics prior}
++
+\text{RL residual optimization}
+}
+\]
+
+RL 学的是：
+
+> 在物理可解释的基础转换趋势上，为了进一步降低能耗、缩短时间、适应扰动，应该提前还是推迟多少。
+
+例如：
+
+\[
+\lambda_{\mathrm{phy}}=0.62
+\]
+
+TD3 可能学习：
+
+\[
+\Delta\lambda^{RL}=+0.08
+\]
+
+于是：
+
+\[
+\lambda_d=0.70
+\]
+
+或者重载/突风情况下：
+
+\[
+\Delta\lambda^{RL}=-0.15
+\]
+
+得到：
+
+\[
+\lambda_d=0.47
+\]
+
+这就非常漂亮。
+
+---
+
+# 十一、液态神经网络不要用原始 LTC，我建议正式采用 CfC
+
+你说之前考虑液态神经网络，这个方向可以保留，但我建议最后不要采用原始 LTC，而采用：
+
+\[
+\boxed{\text{CfC}}
+\]
+
+即：
+
+> **Closed-form Continuous-time Neural Network**
+
+LTC 本质上是连续时间动态网络，但需要数值 ODE 求解。CfC 是从 LTC 推导出的闭式连续时间结构，可以显式处理时间间隔，同时避免昂贵的数值 ODE solver。CfC 原始论文特别强调了连续时间、时序建模和计算效率。
+
+这和 VTOL transition 是有内在匹配关系的。
+
+因为你的转换不是：
+
+\[
+s_t
+\rightarrow
+a_t
+\]
+
+这么简单，而是：
+
+\[
+\boxed{
+s_{t-k:t}
+\rightarrow
+\text{transition trend}
+\rightarrow
+a_t
+}
+\]
+
+例如：
+
+同样：
+
+\[
+V_a=14~m/s
+\]
+
+一种情况可能是：
+
+\[
+\dot V_a>0
+\]
+
+机翼升力正在快速建立；
+
+另一种可能：
+
+\[
+\dot V_a<0
+\]
+
+正在遭遇阵风或减速。
+
+瞬时状态类似，但未来应该采取的：
+
+\[
+\lambda
+\]
+
+不同。
+
+液态网络正好用于捕捉这种连续动态历史。
+
+---
+
+# 十二、因此 Observation Space 也重新设计
+
+原方案里面：
+
+\[
+\dot V_a
+\]
+
+我反而建议删掉。
+
+因为差分得到：
+
+\[
+\dot V_a
+\]
+
+很容易放大传感器噪声。
+
+现在让 CfC 从时间序列自己学习趋势。
+
+最终推荐：
+
+\[
+\boxed{
+o_t=
+[
+V_a,
+\alpha,
+\gamma,
+\eta_L,
+\eta_C,
+e_h,
+v_z,
+\theta,
+q,
+\lambda_{\mathrm{exec}},
+P_L,
+P_P
+]^\top
+}
+\]
+
+共：
+
+\[
+\boxed{12\text{维}}
+\]
+
+其中：
+
+| 状态 | 含义 |
+|---|---|
+| \(V_a\) | 空速 |
+| \(\alpha\) | 迎角 |
+| \(\gamma\) | 航迹角 |
+| \(\eta_L\) | 机翼垂直承载能力 |
+| \(\eta_C\) | longitudinal aerodynamic control authority |
+| \(e_h\) | 高度误差 |
+| \(v_z\) | 垂向速度 |
+| \(\theta\) | pitch |
+| \(q\) | pitch rate |
+| \(\lambda_{\rm exec}\) | 当前实际卸载程度 |
+| \(P_L\) | lift-rotor power |
+| \(P_P\) | pusher power |
+
+CfC 额外接收：
+
+\[
+\boxed{\Delta t_t}
+\]
+
+所以网络实际更新：
+
+\[
+h_t
+=
+\mathrm{CfC}
+(
+o_t,h_{t-1},\Delta t_t
+)
+\]
+
+这也给你以后做：
+
+- sensor jitter；
+- observation delay；
+- dropped samples；
+- 非严格固定周期；
+
+留下了非常自然的实验接口。
+
+---
+
+# 十三、这时才真正进入“改进 TD3 本体”：四 Critic 架构
+
+标准 TD3 是：
+
+\[
+Q_1,Q_2
+\]
+
+两个 performance critics。
+
+你这里改成：
+
+\[
+\boxed{
+Q_{R,1},Q_{R,2}
+}
+\]
+
+两套**性能 Critic**；
+
+再增加：
+
+\[
+\boxed{
+Q_{C,1},Q_{C,2}
+}
+\]
+
+两套**Safety Critics**。
+
+因此整个结构：
+
+\[
+\boxed{
+1\ Actor
++
+2\ Reward\ Critics
++
+2\ Safety\ Critics
+}
+\]
+
+Critic 数量从：
+
+\[
+2
+\]
+
+变成：
+
+\[
+4
+\]
+
+这才是真正意义上的 TD3 结构改进。
+
+---
+
+# 十四、为什么 Safety Critic 也必须是 Twin Critic
+
+这是一个很好的算法点。
+
+标准 TD3 对 performance value 使用：
+
+\[
+\min(Q_1,Q_2)
+\]
+
+原因是避免：
+
+> 对收益过于乐观。
+
+你的安全问题正好相反。
+
+最危险的是：
+
+> 对风险过于乐观，也就是低估风险。
+
+所以定义：
+
+\[
+\boxed{
+Q_R^{\mathrm{cons}}
+=
+\min
+(Q_{R,1},Q_{R,2})
+}
+\]
+
+而 Safety Critic：
+
+\[
+\boxed{
+Q_C^{\mathrm{cons}}
+=
+\max
+(Q_{C,1},Q_{C,2})
+}
+\]
+
+形成一个非常漂亮的**非对称保守估计机制**：
+
+\[
+\boxed{
+\text{Reward：取较悲观收益}
+}
+\]
+
+\[
+\boxed{
+\text{Safety：取较悲观风险}
+}
+\]
+
+这个点我认为完全可以成为算法章节里的核心创新之一。
+
+---
+
+# 十五、Reward Critic 的 TD target
+
+标准 TD3 的思想保留。
+
+目标 residual action：
+
+\[
+\tilde a_{t+1}
+=
+\operatorname{clip}
+\left[
+\pi'(H_{t+1})
++\epsilon,
+-1,1
+\right]
+\]
+
+其中：
+
+\[
+\epsilon
+\sim
+\operatorname{clip}
+(
+\mathcal N(0,\sigma^2),
+-c,c
+)
+\]
+
+然后：
+
+\[
+\boxed{
+y_R
+=
+r_t
++
+\gamma(1-d_t)
+\min_{i=1,2}
+Q_{R,i}'
+(
+H_{t+1},
+\tilde a_{t+1}
+)
+}
+\]
+
+其中 \(H_t\) 表示 CfC 编码得到的历史状态。
+
+---
+
+# 十六、Safety Critic 使用相反方向的 conservative target
+
+定义安全代价：
+
+\[
+c_t\ge0
+\]
+
+则：
+
+\[
+\boxed{
+y_C
+=
+c_t
++
+\gamma_C(1-d_t)
+\max_{i=1,2}
+Q_{C,i}'
+(
+H_{t+1},
+\tilde a_{t+1}
+)
+}
+\]
+
+两个 Safety Critic：
+
+\[
+Q_{C,1},
+\quad
+Q_{C,2}
+\]
+
+分别逼近这个 target。
+
+这就形成：
+
+\[
+\boxed{
+\min Q_R
+\quad+\quad
+\max Q_C
+}
+\]
+
+我认为这是你整篇文章算法部分最值得重点写的公式之一。
+
+---
+
+# 十七、Actor 不再只最大化 Reward Critic
+
+最终 Actor objective：
+
+\[
+\boxed{
+J_\pi
+=
+\mathbb E
+\left[
+Q_R^{\mathrm{cons}}
+-
+\beta
+Q_C^{\mathrm{cons}}
+-
+\kappa_r
+(a_t^{RL})^2
+\right]
+}
+\]
+
+三个部分分别代表：
+
+\[
+Q_R
+\rightarrow
+\text{性能}
+\]
+
+\[
+Q_C
+\rightarrow
+\text{安全风险}
+\]
+
+\[
+(a^{RL})^2
+\rightarrow
+\text{Physics residual regularization}
+\]
+
+最后这一项意味着：
+
+> 如果没有明显性能收益，策略优先靠近物理先验 \(\lambda_{\mathrm{phy}}\)，而不是无理由偏离。
+
+这个非常符合航空控制逻辑。
+
+---
+
+# 十八、\(\beta\) 不手工固定，而是自适应 Lagrange Multiplier
+
+避免再手调：
+
+\[
+w_{\rm safety}=100?
+\]
+
+还是：
+
+\[
+1000?
+\]
+
+定义允许安全代价预算：
+
+\[
+d_C
+\]
+
+然后：
+
+\[
+\boxed{
+\beta
+\leftarrow
+\left[
+\beta+
+\alpha_\beta
+\left(
+\mathbb E[Q_C]-d_C
+\right)
+\right]_+
+}
+\]
+
+如果风险太高：
+
+\[
+Q_C>d_C
+\]
+
+则：
+
+\[
+\beta\uparrow
+\]
+
+Actor 自动更加重视安全。
+
+如果长期非常安全：
+
+\[
+Q_C<d_C
+\]
+
+则：
+
+\[
+\beta\downarrow
+\]
+
+允许更多性能探索。
+
+于是这已经不是：
+
+> reward 里面手工塞十个 penalty。
+
+而是：
+
+\[
+\boxed{
+\text{Constrained policy optimization}
+}
+\]
+
+---
+
+# 十九、Reward 和 Safety Cost 必须彻底分开
+
+这一点很重要。
+
+## 性能 Reward
+
+首先：
+
+\[
+\boxed{
+P_{\rm total}
+=
+\sum_iP_{L,i}
++
+P_P
+}
+\]
+
+绝对不能只计算 lift rotor power。
+
+然后：
+
+\[
+\boxed{
+\begin{aligned}
+r_t
+=&
+-w_E
+\frac{P_{\rm total}}{P_{\rm ref}}
+\Delta t\\
+&
+-w_T\Delta t\\
+&
+-w_h
+\left(
+\frac{e_h}{h_{\rm ref}}
+\right)^2\\
+&
+-w_q
+\left(
+\frac{q}{q_{\rm ref}}
+\right)^2\\
+&
+-w_\lambda
+(
+\lambda_t-\lambda_{t-1}
+)^2\\
+&
++
+R_G\mathbf 1_{\rm success}
+\end{aligned}}
+\]
+
+目标就是：
+
+\[
+\boxed{
+Energy
++
+Transition\ Time
++
+Stability
++
+Smoothness
+}
+\]
+
+你参考的 CEP 论文同样把推进能耗直接纳入 TD3 reward，但它主要通过 rotor speed 的三次方计算能耗。
+
+你这里必须进一步使用：
+
+\[
+P_{\rm lift}+P_{\rm pusher}
+\]
+
+否则会产生“把能耗从 lift rotors 转移给 pusher”的作弊问题。
+
+---
+
+# 二十、Safety Cost 单独定义
+
+先定义一个**软安全边界**：
+
+\[
+\lambda_{\max}^{soft}(s_t)
+\]
+
+它比硬物理边界提前留有裕量。
+
+安全 cost 建议：
+
+\[
+\boxed{
+\begin{aligned}
+c_t
+=&
+w_s
+[
+\lambda_d-
+\lambda_{\max}^{soft}(s_t)
+]_+^2\\
+&
++
+w_\alpha
+\left[
+\frac{
+|\alpha|-\alpha_{\rm soft}
+}{
+\alpha_{\rm hard}-\alpha_{\rm soft}
+}
+\right]_+^2\\
+&
++
+w_h
+\left[
+\frac{
+|e_h|-h_{\rm soft}
+}{
+h_{\rm hard}-h_{\rm soft}
+}
+\right]_+^2\\
+&
++
+w_z
+\left[
+\frac{
+-v_z-v_{z,\rm soft}
+}{
+v_{z,\rm hard}-v_{z,\rm soft}
+}
+\right]_+^2\\
+&
++
+w_I
+|\lambda_d-\lambda_{\rm exec}|
+\end{aligned}
+}
+\]
+
+最后一项非常重要：
+
+\[
+|\lambda_d-\lambda_{\rm exec}|
+\]
+
+表示：
+
+> Actor 提出的命令有多大程度被 Safety Shield 否决。
+
+所以最终策略会学习：
+
+\[
+\boxed{
+\text{尽量自己输出安全动作}
+}
+\]
+
+而不是：
+
+> 反正 Safety Filter 会救我。
+
+---
+
+# 二十一、Hard Safety Shield 仍然保留，但不把它宣传成“TD3改进”
+
+这层是工程安全层。
+
+使用：
+
+- stall margin；
+- AoA margin；
+- \(\eta_L\)；
+- \(\eta_C\)；
+- altitude margin；
+- descent rate；
+
+构造：
+
+\[
+g_V,\quad
+g_\alpha,\quad
+g_L,\quad
+g_C,\quad
+g_h
+\]
+
+然后：
+
+\[
+\boxed{
+\lambda_{\max}^{hard}
+=
+\min
+(
+g_V,
+g_\alpha,
+g_L,
+g_C,
+g_h
+)
+}
+\]
+
+候选动作：
+
+\[
+\lambda_d
+\]
+
+经过：
+
+\[
+\boxed{
+\lambda_{\rm proj}
+=
+\min
+(
+\lambda_d,
+\lambda_{\max}^{hard}
+)
+}
+\]
+
+这里不要写：
+
+> mathematically guarantees flight safety
+
+而写：
+
+> enforces the predefined transition command envelope.
+
+因为没有 CBF/Lyapunov invariant-set 证明的话，不能声称严格安全保证。
+
+---
+
+# 二十二、Rate Limiter 改成“非对称”的
+
+原来：
+
+\[
+|\dot\lambda|
+\le
+\dot\lambda_{\max}
+\]
+
+不够好。
+
+应该定义：
+
+\[
+\boxed{
+\dot\lambda_{\max}^{+}
+<
+\dot\lambda_{\max}^{-}
+}
+\]
+
+这里：
+
+\[
+\dot\lambda^{+}
+\]
+
+表示继续卸载；
+
+\[
+\dot\lambda^{-}
+\]
+
+表示重新投入升力旋翼。
+
+也就是说：
+
+> **卸载慢，恢复快。**
+
+实际：
+
+\[
+\lambda_{\rm exec}
+=
+\begin{cases}
+\lambda_{t-1}
++
+\min
+(
+\lambda_{\rm proj}-\lambda_{t-1},
+\dot\lambda_{\max}^{+}\Delta t
+),
+&\lambda_{\rm proj}\ge\lambda_{t-1}
+\\[4pt]
+\lambda_{t-1}
++
+\max
+(
+\lambda_{\rm proj}-\lambda_{t-1},
+-\dot\lambda_{\max}^{-}\Delta t
+),
+&\lambda_{\rm proj}<\lambda_{t-1}
+\end{cases}
+\]
+
+必要时增加 emergency recovery：
+
+\[
+\dot\lambda_{\rm emergency}^{-}
+>
+\dot\lambda_{\max}^{-}
+\]
+
+用于：
+
+\[
+|\alpha|\rightarrow\alpha_{\rm stall}
+\]
+
+或者：
+
+\[
+v_z\ll0
+\]
+
+时快速恢复旋翼支撑。
+
+---
+
+# 二十三、\(\lambda\) 如何真正作用到 Lift Rotors
+
+对于恒高转换：
+
+\[
+F_{z,\rm req}
+=
+m(g+a_{z,d})
+\]
+
+垂直旋翼 feed-forward：
+
+\[
+\boxed{
+T_{L,\rm ff}
+=
+(1-\lambda_{\rm exec})
+\frac{
+F_{z,\rm req}
+}{
+\cos\phi\cos\theta+\varepsilon
+}
+}
+\]
+
+低层高度反馈仍然存在：
+
+\[
+T_{L,\rm fb}
+\]
+
+因此：
+
+\[
+\boxed{
+T_{L,\rm cmd}
+=
+\operatorname{sat}
+(
+T_{L,\rm ff}
++
+T_{L,\rm fb}
+)
+}
+\]
+
+这个定义比：
+
+\[
+T_L=(1-\lambda)mg
+\]
+
+严谨。
+
+---
+
+# 二十四、气动姿态控制权不要再由 \(\lambda\) 控制
+
+这里改为：
+
+\[
+w_{\rm FW}
+=
+\mathcal S
+(
+\eta_C;
+\eta_{C,0},
+\eta_{C,1}
+)
+\]
+
+然后：
+
+\[
+w_{\rm MC}=1-w_{\rm FW}
+\]
+
+姿态控制分配：
+
+\[
+\boxed{
+u_{\rm att}
+=
+w_{\rm MC}u_{\rm MC}
++
+w_{\rm FW}u_{\rm FW}
+}
+\]
+
+注意这里是：
+
+\[
+\eta_C
+\]
+
+决定姿态控制的物理接管程度。
+
+而：
+
+\[
+\lambda
+\]
+
+只控制 vertical-lift unloading。
+
+于是彻底解决：
+
+> 为什么“托得住”和“控得住”是两件事，却用一个 \(\lambda\) 控制？
+
+这个审稿问题。
+
+---
+
+# 二十五、Pusher 完全不让 RL 控
+
+保持：
+
+\[
+\boxed{
+T_P
+=
+C_V(V_{a,d}-V_a)
+}
+\]
+
+或者由 PX4/ArduPilot 的 airspeed controller 负责。
+
+所以：
+
+\[
+\text{CA-LSC-TD3}
+\rightarrow
+\lambda
+\]
+
+而：
+
+\[
+V_a\ Controller
+\rightarrow
+Pusher
+\]
+
+这样你最终节能改善才能明确归因于：
+
+\[
+\boxed{
+\text{更合理的 lift-rotor unloading}
+}
+\]
+
+而不是 TD3 同时偷偷优化了推进油门。
+
+---
+
+# 二十六、最终完整控制架构
+
+整套 Method 可以直接按下面这个框架来画 Figure 1：
+
+```text
+                 Vehicle / State Estimator
+                           │
+        ┌──────────────────┼──────────────────┐
+        │                  │                  │
+       Va, α, γ         h, vz, θ, q       PL, PP, λ
+        │                  │                  │
+        └──────────────────┼──────────────────┘
+                           │
+                 Physics Estimation
+                           │
+               ┌───────────┴───────────┐
+               │                       │
+              ηL                      ηC
+       Wing-support ratio      Control-authority margin
+               │                       │
+               └───────────┬───────────┘
+                           │
+                    Physics Prior
+                           │
+                        λphy
+                           │
+                           ▼
+              ┌──────────────────────┐
+              │  CfC Liquid Encoder  │
+              │   CA-LSC-TD3 Actor   │
+              └──────────┬───────────┘
+                         │
+                    residual aRL
+                         │
+                         ▼
+                 λd = λphy + ΔλRL
+                         │
+              ┌──────────┴───────────┐
+              │                      │
+      Twin Safety Critics     Twin Reward Critics
+              │                      │
+              └──────────┬───────────┘
+                         │
+               Lagrangian Actor Update
+                         │
+                         ▼
+               Hard Safety Projection
+                         │
+                         ▼
+              Asymmetric Rate Limiter
+                         │
+                         ▼
+                       λexec
+                         │
+             Lift-Rotor Unloading
+                         │
+              Low-Level Autopilot
+                 ┌───────┴────────┐
+                 │                │
+              Lift rotors      FW surfaces
+
+    Independent Airspeed Controller → Pusher
+```
+
+这张就是整篇文章的灵魂图。
+
+---
+
+# 二十七、CfC 网络具体怎么搭
+
+我建议先不要做特别巨大的网络。
+
+### Actor
+
+\[
+12D\ observation
+\rightarrow
+FC(64)
+\rightarrow
+CfC(64)
+\rightarrow
+FC(64)
+\rightarrow
+\tanh(1)
+\]
+
+输出：
+
+\[
+a_t^{RL}\in[-1,1]
+\]
+
+### 每个 Reward Critic
+
+\[
+o_{t-L:t}
+\rightarrow
+CfC(64)
+\]
+
+然后和：
+
+\[
+a_t^{RL}
+\]
+
+拼接：
+
+\[
+[h_t,a_t]
+\rightarrow
+FC(128)
+\rightarrow
+FC(128)
+\rightarrow
+Q_R
+\]
+
+两套独立参数。
+
+### Safety Critic
+
+结构同样：
+
+\[
+[h_t,a_t]
+\rightarrow
+FC(128)
+\rightarrow
+FC(128)
+\rightarrow
+Q_C
+\]
+
+也是两套独立参数。
+
+因此：
+
+\[
+\boxed{
+2\ Reward\ Critics
++
+2\ Safety\ Critics
+}
+\]
+
+不要共享最后的 Critic 参数。
+
+---
+
+# 二十八、因为用了 CfC，Replay Buffer 不能再随机抽单个 transition
+
+这个地方很多论文会写错。
+
+普通 TD3：
+
+\[
+(s_t,a_t,r_t,s_{t+1})
+\]
+
+随便随机抽。
+
+但你现在是 recurrent / liquid policy。
+
+所以必须：
+
+\[
+\boxed{
+\text{Sequence Replay Buffer}
+}
+\]
+
+例如高层控制频率：
+
+\[
+10~Hz
+\]
+
+推荐初始：
+
+\[
+L=20
+\]
+
+也就是每个训练 sequence 包含：
+
+\[
+2s
+\]
+
+历史。
+
+前：
+
+\[
+B=5
+\]
+
+步做 burn-in，用于恢复 hidden state；
+
+后：
+
+\[
+15
+\]
+
+步参与 loss。
+
+这样你的 CfC 才是真的在学习：
+
+\[
+\text{transition temporal dynamics}
+\]
+
+而不是挂一个“液态网络”名字。
+
+---
+
+# 二十九、为什么 CfC 这一创新必须专门做实验
+
+这一点非常重要。
+
+如果最后实验全部是：
+
+\[
+10Hz
+\]
+
+固定采样、没有延迟、没有 dropout，
+
+审稿人一定会问：
+
+> 为什么不用 MLP 或 LSTM？
+
+所以 Case 2 里面必须加入：
+
+\[
+\Delta t_t
+\]
+
+变化。
+
+例如：
+
+\[
+\Delta t
+\sim
+U(0.08,0.12)s
+\]
+
+另外加入：
+
+\[
+5\%\sim10\%
+\]
+
+observation dropout，
+
+以及一定范围 sensor delay。
+
+然后比较：
+
+\[
+MLP
+\]
+
+\[
+LSTM
+\]
+
+\[
+CfC
+\]
+
+这时液态网络的存在才有论文价值。
+
+CfC 本身就是针对连续时间和时序信息建模提出的，因此这样的实验和网络特性是匹配的。
+
+---
+
+# 三十、训练策略也重新定
+
+我建议采用三阶段 Curriculum。
+
+### Stage I：Nominal Physics-Guided Training
+
+环境：
+
+\[
+m=m_0
+\]
+
+无风或弱风；
+
+传感器理想；
+
+Actor 初始输出层设为接近：
+
+\[
+a^{RL}=0
+\]
+
+所以一开始：
+
+\[
+\lambda_d
+\approx
+\lambda_{\rm phy}
+\]
+
+不是乱飞。
+
+### Stage II：Domain Randomization
+
+逐渐加入：
+
+\[
+m,\quad
+J,\quad
+C_L,\quad
+C_{m_{\delta_e}},
+\quad
+\eta_{\rm motor},
+\quad
+wind
+\]
+
+随机化。
+
+### Stage III：Safety-Stress Training
+
+加入：
+
+gust、turbulence、sensor noise、sampling jitter、delay、mass-estimation error、aerodynamic-model error。
+
+最终保存 policy 的标准不要只看：
+
+\[
+\text{maximum reward}
+\]
+
+而采用：
+
+\[
+\boxed{
+SR
+\rightarrow
+constraint\ cost
+\rightarrow
+reward
+}
+\]
+
+的优先级。
+
+也就是不允许一个能耗低但安全性差的 policy 成为 best checkpoint。
+
+---
+
+# 三十一、训练超参数初始版
+
+可以先这样开始，不需要现在把数字写死进论文：
+
+| 参数 | 初始建议 |
+|---|---:|
+| High-level RL frequency | 10 Hz |
+| CfC hidden units | 64 |
+| Critic FC | 128–128 |
+| \(\gamma\) | 0.99 |
+| \(\gamma_C\) | 0.99 |
+| \(\tau\) | 0.005 |
+| Policy delay | 2 |
+| Actor LR | \(3\times10^{-4}\) |
+| Critic LR | \(10^{-3}\) |
+| Safety critic LR | \(10^{-3}\) |
+| Lagrange LR | \(10^{-4}\sim10^{-3}\) |
+| Sequence length | 20 |
+| Burn-in | 5 |
+| Sequence batch | 64 |
+| Replay size | \(10^6\) transitions equivalent |
+| Exploration | Gaussian residual noise |
+
+你的基调论文使用的是两层 256 MLP、\(\gamma=0.99\)、\(\tau=0.005\)、policy delay 2，并训练 2000 episodes。
+
+因此 TD3 的通用训练参数可以参考它，但**网络结构不能照搬**。
+
+---
+
+# 三十二、转换完成条件
+
+必须同时满足：
+
+\[
+V_a
+\ge
+V_{\rm FW,min}
+\]
+
+\[
+\eta_L
+\ge
+\eta_{L,\rm FW}
+\]
+
+\[
+\eta_C
+\ge
+\eta_{C,\rm FW}
+\]
+
+\[
+\lambda_{\rm exec}
+\ge0.95
+\]
+
+\[
+|e_h|
+\le
+h_{\rm tol}
+\]
+
+\[
+|q|
+\le
+q_{\rm tol}
+\]
+
+持续：
+
+\[
+\boxed{
+T_{\rm hold}=1\sim2s
+}
+\]
+
+才定义：
+
+\[
+\boxed{
+\text{Successful Transition}
+}
+\]
+
+然后正式进入 FW mode，并关闭 lift rotors。
+
+这部分可以保留你原方案的逻辑。
+
+---
+
+# 三十三、训练 TD3 之前，仍然必须做三组“奠基实验”
+
+这个我完全保留，但重新升级。
+
+## F1：Capability Map
+
+扫描：
+
+\[
+V_a,\quad
+\alpha,\quad
+m,\quad
+\lambda
+\]
+
+记录：
+
+\[
+L_z,
+M_{e,\rm ava},
+M_{\rm req},
+\Delta h,
+q,
+E
+\]
+
+建立：
+
+\[
+\eta_L
+\]
+
+和：
+
+\[
+\eta_C
+\]
+
+与真实可转换能力的关系。
+
+---
+
+## F2：证明“相同空速 ≠ 相同转换能力”
+
+例如固定：
+
+\[
+V_a=14m/s
+\]
+
+构造：
+
+\[
+\text{Nominal}
+\]
+
+\[
+\text{Heavy payload}
+\]
+
+\[
+\text{Gust}
+\]
+
+\[
+\text{Model mismatch}
+\]
+
+比较：
+
+\[
+\eta_L,\eta_C
+\]
+
+最终应该出现：
+
+\[
+V_a^{A}=V_a^{B}
+\]
+
+但是：
+
+\[
+\eta_L^A\neq\eta_L^B
+\]
+
+\[
+\eta_C^A\neq\eta_C^B
+\]
+
+从而：
+
+\[
+\lambda_{\rm feasible}^{A}
+\neq
+\lambda_{\rm feasible}^{B}
+\]
+
+---
+
+# 三十四、F3 我建议比原来再强一步：做“安全可卸载能力预测”
+
+定义标签：
+
+\[
+y=
+\begin{cases}
+1,&\text{candidate }\lambda\text{在未来 }T_p\text{ 内保持安全}\\
+0,&\text{otherwise}
+\end{cases}
+\]
+
+然后比较：
+
+\[
+V_a
+\]
+
+单变量对 feasible/unfeasible 的判别能力，
+
+和：
+
+\[
+[V_a,\eta_L,\eta_C]
+\]
+
+的判别能力。
+
+报告例如：
+
+\[
+ROC-AUC
+\]
+
+或者：
+
+\[
+F_1\text{-score}
+\]
+
+如果最后：
+
+\[
+AUC(V_a)=0.75
+\]
+
+而：
+
+\[
+AUC(V_a,\eta_L,\eta_C)=0.95
+\]
+
+那 Contribution 1 就不再是一句主观描述。
+
+而是有数据证明：
+
+\[
+\boxed{
+\eta_L+\eta_C
+\text{比单一空速更能表征转换可行性}
+}
+\]
+
+这个实验我非常推荐。
+
+---
+
+# 三十五、正式 Case 1：Nominal Transition
+
+统一 nominal condition。
+
+比较：
+
+| 方法 | 特征 |
+|---|---|
+| Fixed Airspeed Schedule | 传统阈值转换 |
+| Physics Prior | 只有 \(\lambda_{\rm phy}\)，无 RL |
+| Vanilla TD3 | MLP、直接输出 \(\lambda\) |
+| CA-TD3 | 加 \(\eta_L,\eta_C\)，标准 TD3 |
+| **CA-LSC-TD3** | 完整方法 |
+
+指标：
+
+\[
+E_{\rm trans}
+\]
+
+\[
+T_{\rm trans}
+\]
+
+\[
+\Delta h_{\max}
+\]
+
+\[
+RMSE_\theta
+\]
+
+\[
+J_\lambda
+\]
+
+\[
+SR
+\]
+
+这一组回答：
+
+> 正常条件下，改进算法到底有没有性能优势？
+
+---
+
+# 三十六、Case 2：Realistic Generalization
+
+Policy：
+
+\[
+\boxed{\text{不重新训练}}
+\]
+
+直接测试。
+
+加入：
+
+\[
+headwind
+\]
+
+\[
+tailwind
+\]
+
+如果是完整 6-DOF 模型，再加入：
+
+\[
+crosswind
+\]
+
+以及：
+
+\[
+gust
+\]
+
+\[
+Dryden/turbulence
+\]
+
+\[
+sensor\ noise
+\]
+
+\[
+actuator\ dynamics
+\]
+
+\[
+sampling\ jitter
+\]
+
+\[
+observation\ dropout
+\]
+
+\[
+sensor\ delay
+\]
+
+特别针对 CfC 做：
+
+\[
+\boxed{
+MLP\ vs\ LSTM\ vs\ CfC
+}
+\]
+
+比较。
+
+如果你最终只做纵向模型，就**不要声称验证 crosswind control**；你作为基调的 CEP 论文也明确指出其 2D 模型忽略了横向、roll、yaw 和 cross-axis coupling。
+
+---
+
+# 三十七、Case 3：Monte Carlo Robustness
+
+直接：
+
+\[
+\boxed{N=1000}
+\]
+
+你的基调论文也用了 1000 次 Monte Carlo 对质量和惯量不确定性进行鲁棒性评价，因此这个实验规模是有依据的。
+
+我建议最终随机：
+
+\[
+\frac{m}{m_0}
+\sim
+U(0.85,1.25)
+\]
+
+\[
+\frac{J}{J_0}
+\sim
+U(0.9,1.1)
+\]
+
+实际气动系数：
+
+\[
+C_L^{real}
+=
+k_LC_L^{model}
+\]
+
+\[
+k_L\sim U(0.85,1.15)
+\]
+
+控制面效率：
+
+\[
+C_{m_{\delta_e}}^{real}
+=
+k_CC_{m_{\delta_e}}^{model}
+\]
+
+\[
+k_C\sim U(0.85,1.15)
+\]
+
+质量估计误差：
+
+\[
+\frac{\hat m-m}{m}
+\sim
+U(-0.10,0.10)
+\]
+
+motor efficiency：
+
+\[
+\eta_{\rm motor}
+\sim
+U(0.90,1.00)
+\]
+
+风速：
+
+\[
+V_w
+\sim
+U(0,10)\;m/s
+\]
+
+再随机：
+
+- gust seed；
+- turbulence seed；
+- sensor noise；
+- delay；
+- actuator time constant。
+
+这组才真正能证明：
+
+\[
+\boxed{
+\eta_L,\eta_C
+\text{不是建立在完美物理模型上的}
+}
+\]
+
+---
+
+# 三十八、Case 4：Ablation Study 必须重新设计
+
+最后建议做下面这条链：
+
+| Variant | \(\eta_L,\eta_C\) | Physics Residual | CfC | Safety Critics | Hard Shield |
+|---|---:|---:|---:|---:|---:|
+| A0 Vanilla TD3 | × | × | × | × | × |
+| A1 CA-TD3 | ✓ | × | × | × | × |
+| A2 CA-Residual-TD3 | ✓ | ✓ | × | × | × |
+| A3 CA-LSTM-TD3 | ✓ | ✓ | LSTM | × | × |
+| A4 CA-Liquid-TD3 | ✓ | ✓ | CfC | × | × |
+| A5 CA-LSC-TD3 | ✓ | ✓ | CfC | ✓ | × |
+| A6 Full Proposed | ✓ | ✓ | CfC | ✓ | ✓ |
+
+这张表可以直接成为论文最重要的消融实验设计。
+
+它回答六个问题：
+
+\[
+\eta_L+\eta_C
+\]
+
+有没有用？
+
+Physics Residual 有没有用？
+
+CfC 比 MLP 有没有用？
+
+CfC 比 LSTM 有没有用？
+
+Safety Critic 有没有用？
+
+Hard Shield 到底贡献了多少？
+
+---
+
+# 三十九、特别增加一个 Safety Intervention Rate
+
+定义：
+
+\[
+\boxed{
+IR
+=
+\frac{
+N_{\rm shield}
+}{
+N_{\rm total}
+}
+}
+\]
+
+其中：
+
+\[
+N_{\rm shield}
+\]
+
+表示：
+
+\[
+\lambda_d
+\neq
+\lambda_{\rm exec}
+\]
+
+的次数。
+
+最终最理想结果不是：
+
+> Proposed 从来没出事，因为 Safety Filter 一直拦着。
+
+而应该是：
+
+\[
+\boxed{
+SR\uparrow,
+\qquad
+IR\downarrow
+}
+\]
+
+也就是：
+
+> Safety Critic 使 Actor 本身越来越安全，因此 Hard Shield 很少需要干预。
+
+这个结果会极大增强你的 Safety Critic 创新。
+
+---
+
+# 四十、最终评价指标我建议 9 个
+
+核心性能：
+
+\[
+SR
+\]
+
+转换成功率；
+
+\[
+E_{\rm trans}
+=
+\int_0^{T_{\rm trans}}
+P_{\rm total}(t)dt
+\]
+
+总推进能耗；
+
+\[
+T_{\rm trans}
+\]
+
+转换时间；
+
+\[
+\Delta h_{\max}
+\]
+
+最大高度损失；
+
+\[
+M_{\alpha,\min}
+=
+\alpha_{\rm stall}-\max|\alpha|
+\]
+
+最小失速裕度；
+
+\[
+RMSE_\theta
+\]
+
+pitch stability；
+
+\[
+J_\lambda
+=
+\sum_t
+(
+\lambda_t-\lambda_{t-1}
+)^2
+\]
+
+控制平滑度；
+
+\[
+IR
+\]
+
+Safety intervention rate；
+
+最后增加：
+
+\[
+CVR
+\]
+
+constraint violation rate。
+
+Monte Carlo 给：
+
+\[
+Mean
+\pm
+Std
+\]
+
+以及：
+
+\[
+P95
+\]
+
+不要只报告 mean。
+
+---
+
+# 四十一、因为使用 CfC，必须再报告两个网络指标
+
+否则“液态神经网络”很容易变成花架子。
+
+报告：
+
+\[
+N_{\rm param}
+\]
+
+网络参数量；
+
+以及：
+
+\[
+T_{\rm infer}
+\]
+
+单次 Actor inference time。
+
+最终需要证明：
+
+\[
+T_{\rm infer}
+\ll
+T_{\rm RL}
+\]
+
+例如 RL 控制周期：
+
+\[
+100ms
+\]
+
+那么推理必须远低于：
+
+\[
+100ms
+\]
+
+CfC 之所以比原始 LTC 更适合这里，一个重要原因正是它避免了原始连续 ODE 网络昂贵的 numerical solver。
+
+---
+
+# 四十二、现在必须规避一个非常新的“撞创新”问题
+
+这点我建议你记住。
+
+刚发表的 2026 年论文已经做了：
+
+\[
+\boxed{
+\text{Incremental TD3}
++
+\text{Rate Limit}
++
+\text{Transition Corridor Projection}
+}
+\]
+
+用于 quad-tiltrotor nacelle scheduling，而且作者同样采用高层 RL scheduler + 低层稳定控制器的架构。
+
+所以我们**绝对不要再把下面这些写成核心创新**：
+
+> “首次提出 TD3 进行 VTOL 转换调度。”
+
+不行。
+
+> “提出增量 TD3 保证转换平滑。”
+
+也不建议。
+
+> “TD3 后增加投影层保证转换走廊。”
+
+也不够新。
+
+他们的 scheduling state 主要是 altitude error、forward speed、rotor-speed effort 和 nacelle state，并以速度—倾转角 corridor 作为约束。
+
+所以你的区别必须牢牢放在：
+
+\[
+\boxed{
+\eta_L
++
+\eta_C
+}
+\]
+
+\[
+\boxed{
+\text{Lift-rotor unloading rather than nacelle scheduling}
+}
+\]
+
+\[
+\boxed{
+\text{CfC temporal TD3}
+}
+\]
+
+\[
+\boxed{
+\text{Twin safety critics}
+}
+\]
+
+\[
+\boxed{
+\text{Physics-guided residual action}
+}
+\]
+
+上面。
+
+另外，2026 年也已经出现 physics-informed sparse RL 用于 hybrid VTOL control，因此以后也不要单独把“physics-informed RL”四个字当创新。
+
+你的物理创新必须具体到：
+
+> **wing-support capability + aerodynamic-control margin guided residual transition policy**
+
+而不是泛泛的：
+
+> physics-informed TD3。
+
+---
+
+# 四十三、和你基调论文到底哪些地方沿用，哪些必须拉开
+
+| 内容 | CEP 基调论文 | 你的论文 |
+|---|---|---|
+| 控制层级 | RL 高层 + DO-BS 低层 | **沿用思想**：RL 高层 + autopilot 低层 |
+| RL 输出 | optimal pitch angle | **不同：lift-rotor unloading residual** |
+| 飞行器 | tilt-rotor quadrotor | **Lift+Cruise VTOL** |
+| TD3 网络 | 普通 MLP | **CfC liquid temporal network** |
+| Critics | 2 reward critics | **2 reward + 2 safety critics** |
+| Safety | binary penalty + terminate | **constrained learning + safety critics + hard shield** |
+| Physics state | generic kinematic/control states | **\(\eta_L+\eta_C\)** |
+| Energy | rotor energy | **lift rotors + pusher total propulsion energy** |
+| Robustness | wind + noise + actuator + parameter uncertainty | **沿用并进一步增加 aero/estimation/sampling uncertainty** |
+| Monte Carlo | 1000 | **可以沿用 1000** |
+
+CEP 原文实际上主要使用 binary constraint penalty，并在越界时结束 episode。
+
+你的方法则不再主要依靠：
+
+\[
+-R_{\rm failure}
+\]
+
+而是：
+
+\[
+\boxed{
+Q_C
++
+\beta
++
+Hard\ Shield
+}
+\]
+
+这一点足够把算法层级明显拉开。
+
+---
+
+# 四十四、最后我建议把三个 Contributions 正式定成这样
+
+### Contribution 1 —— Physics-based transition capability representation
+
+提出：
+
+\[
+\boxed{
+\eta_L,\eta_C
+}
+\]
+
+其中 \(\eta_L\) 表示当前机翼的实际竖直承载能力，\(\eta_C\) 表示基于动态压强、舵面剩余控制能力和 shadow-controller moment demand 的纵向气动控制余度。
+
+核心观点：
+
+\[
+\boxed{
+V_a
+\not\equiv
+\text{transition capability}
+}
+\]
+
+而：
+
+\[
+\boxed{
+\eta_L+\eta_C
+}
+\]
+
+更直接表征 rotor-borne → wing-borne 的物理能力建立过程。
+
+---
+
+### Contribution 2 —— CA-LSC-TD3
+
+提出真正修改后的：
+
+\[
+\boxed{
+\text{Control-Authority-Aware Liquid Safety-Constrained TD3}
+}
+\]
+
+包含：
+
+\[
+\boxed{
+CfC\ Temporal\ Encoder
+}
+\]
+
+\[
+\boxed{
+Physics\ Residual\ Actor
+}
+\]
+
+以及：
+
+\[
+\boxed{
+2\ Reward\ Critics
++
+2\ Safety\ Critics
+}
+\]
+
+并采用：
+
+\[
+\min Q_R
+\]
+
+与：
+
+\[
+\max Q_C
+\]
+
+的非对称保守估计和自适应 Lagrangian constrained optimization。
+
+这一条才是：
+
+\[
+\boxed{\text{真正的“改进 TD3”}}
+\]
+
+---
+
+### Contribution 3 —— Hierarchical safe transition architecture
+
+构建：
+
+\[
+\boxed{
+CA\!-\!LSC\!-\!TD3
++
+Hard\ Safety\ Shield
++
+Low\!-\!Level\ Autopilot
+}
+\]
+
+的分层转换架构。
+
+RL 负责：
+
+\[
+\text{optimal lift-rotor unloading}
+\]
+
+Safety Shield 负责：
+
+\[
+\text{predefined envelope enforcement}
+\]
+
+低层飞控负责：
+
+\[
+\text{flight stabilization}
+\]
+
+并在：
+
+\[
+mass
++
+aerodynamic\ uncertainty
++
+wind
++
+sensor
++
+actuator
++
+sampling
+\]
+
+不确定性下通过 1000 次 Monte Carlo 验证。
+
+---
+
+# 四十五、我现在给这套最终方案的判断
+
+如果仍然只是：
+
+\[
+TD3+\eta_L+\eta_C+SafetyFilter
+\]
+
+我会把算法创新评价为：
+
+\[
+\boxed{中等}
+\]
+
+但按现在这版：
+
+\[
+\boxed{
+\eta_L+\eta_C
++
+CfC
++
+Physics\ Residual
++
+Twin\ Safety\ Critics
++
+Lagrangian
+}
+\]
+
+再加：
+
+\[
+\text{Lift+Cruise transition}
+\]
+
+这个具体应用问题，我会认为它已经形成了一套**比较完整的论文级方法，而不是单纯应用 TD3**。
+
+最关键的是，这些模块不是乱堆的：
+
+\[
+\eta_L,\eta_C
+\]
+
+解决：
+
+> **瞬时物理转换能力怎么表示？**
+
+Physics Prior + Residual Actor 解决：
+
+> **怎么减少无物理意义的 RL 探索？**
+
+CfC 解决：
+
+> **怎么理解转换过程的时间演化，而不只看瞬时状态？**
+
+Safety Critics 解决：
+
+> **怎么让 TD3 本身主动学习安全，而不是全靠 reward 和外部 filter？**
+
+Hard Shield 解决：
+
+> **即便 learned policy 出错，怎么限制执行命令？**
+
+所以最后整个逻辑是一条线：
+
+\[
+\boxed{
+\text{Physics perception}
+\rightarrow
+\text{Temporal understanding}
+\rightarrow
+\text{Residual decision}
+\rightarrow
+\text{Risk-aware optimization}
+\rightarrow
+\text{Safety enforcement}
+}
+\]
+
+这就是我建议你后面**不要再轻易改主线**的版本。
+
+下一步最值得做的不是马上训练，而是先把 **Section 2“VTOL Transition Modeling” + Section 3“CA-LSC-TD3 Method”涉及的全部公式编号、变量定义和算法 Algorithm 1** 一次性定下来。尤其要先定清楚 \(\eta_L\)、\(\eta_C\)、CfC Actor、四 Critic、Reward、Safety Cost 和 Actor loss，这些一旦定住，你后面的代码实现和实验基本就不会再反复推翻。
+
+另外，考虑到 2026 年 VTOL+RL 这一方向现在更新很快，我可以持续帮你盯着新出的 **VTOL transition / TD3 / safe RL / liquid network** 论文，避免做到一半又撞上刚发表的方法。
+
+
+
+::chatgpt-content-reference{index="14"}

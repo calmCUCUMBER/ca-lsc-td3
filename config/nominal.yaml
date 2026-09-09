@@ -1,0 +1,115 @@
+task:
+  name: constant_altitude_hover_to_cruise
+  initial_altitude_m: 50.0
+  initial_airspeed_mps: 0.0
+  target_altitude_m: 50.0
+  target_cruise_airspeed_mps: 15.0
+
+scope:
+  vehicle: lift_and_cruise_vtol
+  dynamics: px4_gazebo_sitl_six_dof
+  rl_controls: continuous_transition_allocation_factor
+  pusher_control: independent_airspeed_controller
+  rl_capability_features: [eta_l, eta_c]
+  px4_attitude_blending: synchronized_to_lambda_when_external_active
+  eta_c_modifies_px4_blending: false
+  transition_allocation:
+    lift_collective_weight: 1-lambda_exec
+    fw_attitude_weight: clip((lambda_exec-0.1)/(0.9-0.1),0,1)
+    mc_attitude_weight: 1-fw_attitude_weight
+    pusher_coupled_to_lambda: false
+    stale_command_fallback: stock_px4_airspeed_blending
+
+phase_0_5:
+  transition_stability_gate:
+    dwell_s: 2.0
+    altitude_tolerance_m: 1.0
+    vertical_speed_tolerance_mps: 0.2
+    groundspeed_tolerance_mps: 0.2
+  alpha_valid_min_airspeed_mps: 5.0
+  lambda_target_tolerance: 0.03
+  lambda_target_dwell_s: 1.0
+  lambda_unload_rate_limit_per_s: 0.25
+  lambda_recovery_rate_limit_per_s: 2.0
+  telemetry_freshness_limit_s: 0.5
+  pusher_minimum_peak_setpoint: 0.4
+  pusher_maximum_time_to_8_mps_s: 4.0
+  lift_rotor_spike_threshold_rad_s: 1400.0
+  energy_measurement_kind: model_based_mechanical_proxy
+  telemetry_schema: 13
+  f1_protocol_ready: true
+  f1_full_grid_authorized: true
+  f1_blocker: null
+  transition_allocation_architecture:
+    status: frozen
+    decision_date: 2026-09-02
+    verification_summary: data/evaluation/transition_allocation_sync_v1/transition_allocation_summary.json
+    completed_points: 9
+    expected_points: 9
+    freeze_manifest: config/transition_allocation_freeze.json
+  low_level_configuration:
+    source: config/nominal_low_level.env
+    frozen_across_f0_f1_training_and_cases: true
+    target_airspeed_dependent_parameters_forbidden: true
+  transition_allocation_telemetry:
+    enabled: true
+    changes_px4_blending: true
+    required_weight_sync_rmse_max: 0.02
+    normalized_torque_is_physical_moment: false
+
+rl:
+  frequency_hz: 10.0
+  observation_dim: 12
+  sequence_length: 20
+  burn_in_steps: 5
+  sequence_batch_size: 64
+  gamma_reward: 0.99
+  gamma_cost: 0.99
+  target_tau: 0.005
+  policy_delay: 2
+  actor_learning_rate: 0.0003
+  critic_learning_rate: 0.001
+  safety_critic_learning_rate: 0.001
+
+observation_preprocessing:
+  normalization_statistics: null  # Fit on training data, then freeze.
+  clipping_bounds: null
+  freeze_for_all_evaluation: true
+  shared_across_mlp_lstm_cfc: true
+
+airframe:
+  model: px4_standard_vtol
+  calibration_kind: model_based_sdf
+  calibration_file: data/calibration/model_based/airframe_calibration.json
+  mass_kg: 5.02500003
+  wing_area_m2: 1.0
+  mean_aerodynamic_chord_m: null
+  elevator_min_rad: -0.53
+  elevator_max_rad: 0.53
+  cl_table: data/calibration/model_based/cl_alpha.csv
+  cm_delta_e: null
+  elevator_dmoment_ddelta_per_dynamic_pressure_m3: -0.06
+
+f3:
+  telemetry_schema: 17
+  selected_airspeed_source: relative_wind
+  coordinate_convention: ENU_up_positive
+  eta_l:
+    estimated_mass_kg: null  # Explicit per run; validation uses actual mass.
+    desired_vertical_acceleration_mps2: 0.0
+    minimum_valid_airspeed_mps: 5.0
+    gazebo_wing_force_ground_truth_required: true
+  eta_c:
+    pressure_gate_lower_pa: 15.05125
+    pressure_gate_upper_pa: 60.205
+    demand_semantics: incremental_moment_from_current_actual_elevator
+    actual_elevator_joint_required: true
+    modifies_px4_blending: false
+    physical_mapping_validation_status: pending
+
+notes:
+  - Values above come from the pinned PX4 standard_vtol SDF, not flight identification.
+  - Mean chord and nondimensional Cm_delta_e remain unset because the SDF does not define them.
+  - The old static propulsion curve is a development effort proxy, not measured or formal energy.
+  - Formal energy claims still require a validated power model; the current static proxy is diagnostic only.
+  - Convert PX4 NED telemetry to the paper's up-positive convention at the adapter boundary.
